@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Knight Rehber",
+    "slug": "knight-rehber",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#07070C"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.knightrehber.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#07070C"
+      },
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "WAKE_LOCK"
+      ]
+    },
+    "plugins": [
+      "expo-notifications",
+      "expo-build-properties"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "333fb93b-cd8b-4c15-991d-574bf391907d"
+      }
+    },
+    "owner": "agadt"
+  }
+}
