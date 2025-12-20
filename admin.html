@@ -132,8 +132,8 @@
     <div id="loginScreen" class="login-box">
         <h1>🏰 Knight Rehber</h1>
         <div id="loginAlert" class="alert"></div>
-        <input type="text" id="username" placeholder="Kullanıcı Adı" value="Aga">
-        <input type="password" id="password" placeholder="Şifre" value="2312631">
+        <input type="text" id="username" name="username" placeholder="Kullanıcı Adı" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
+        <input type="password" id="password" name="password" placeholder="Şifre" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')">
         <button onclick="girisYap()">Giriş Yap</button>
     </div>
 
@@ -162,7 +162,25 @@
             </div>
         </div>
 
-        <h2 style="color: #FFD66B; margin: 30px 0 20px 0;">Güncelleme Notları</h2>
+        <!-- BİLDİRİM GÖNDERME -->
+        <h2 style="color: #FFD66B; margin: 30px 0 20px 0;">📢 Bildirim Gönder</h2>
+        
+        <div id="notificationAlert" class="alert"></div>
+
+        <input type="text" id="notificationTitle" placeholder="Bildirim Başlığı">
+        <textarea id="notificationMessage" placeholder="Bildirim Mesajı"></textarea>
+        <select id="notificationTarget">
+            <option value="all">👥 Tüm Kullanıcılar</option>
+            <option value="premium">⭐ Premium Kullanıcılar</option>
+            <option value="free">🎯 Ücretsiz Kullanıcılar</option>
+        </select>
+        <button onclick="bildirimGonder()">📨 Bildirim Gönder</button>
+
+        <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Son Gönderilen Bildirimler</h3>
+        <div id="notificationList"></div>
+
+        <!-- GÜNCELLEME NOTLARI -->
+        <h2 style="color: #FFD66B; margin: 40px 0 20px 0;">📝 Güncelleme Notları</h2>
         
         <div id="updateAlert" class="alert"></div>
 
@@ -220,6 +238,7 @@
         async function yukle() {
             guncellemeleriYukle();
             istatistikleriYukle();
+            bildirimleriYukle();
         }
 
         // İstatistikleri yükle
@@ -252,8 +271,8 @@
 
                 list.innerHTML = guncellemeler.map(g => `
                     <div class="update-item">
-                        <div class="update-title">${g.importance === 'yuksek' ? '❗ ' : '📢 '}${g.title}</div>
-                        <div class="update-content">${g.content}</div>
+                        <div class="update-title">${g.importance === 'yuksek' ? '❗ ' : '📢 '}${escapeHtml(g.title)}</div>
+                        <div class="update-content">${escapeHtml(g.content)}</div>
                         <div class="update-meta">
                             <span>${g.importance === 'yuksek' ? 'Yüksek Önem' : 'Normal'}</span>
                             <span>${g.date || ''}</span>
@@ -324,6 +343,74 @@
             } catch (err) {
                 gosterAlert('updateAlert', '❌ Hata: ' + err.message, 'error');
             }
+        }
+
+        // Bildirim gönder
+        async function bildirimGonder() {
+            const title = document.getElementById('notificationTitle').value;
+            const message = document.getElementById('notificationMessage').value;
+            const target = document.getElementById('notificationTarget').value;
+
+            if (!title || !message) {
+                gosterAlert('notificationAlert', 'Başlık ve mesaj gerekli!', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch(API_URL + '/admin/send-notification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, message, target })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    gosterAlert('notificationAlert', '✅ ' + data.message, 'success');
+                    document.getElementById('notificationTitle').value = '';
+                    document.getElementById('notificationMessage').value = '';
+                    bildirimleriYukle();
+                    istatistikleriYukle();
+                } else {
+                    gosterAlert('notificationAlert', '❌ ' + (data.error || 'Hata!'), 'error');
+                }
+            } catch (err) {
+                gosterAlert('notificationAlert', '❌ Hata: ' + err.message, 'error');
+            }
+        }
+
+        // Bildirimleri yükle
+        async function bildirimleriYukle() {
+            try {
+                const res = await fetch(API_URL + '/admin/notifications');
+                const bildirimler = await res.json();
+                const list = document.getElementById('notificationList');
+
+                if (bildirimler.length === 0) {
+                    list.innerHTML = '<p style="color: #8E97A8; text-align: center; padding: 20px;">Henüz bildirim gönderilmedi</p>';
+                    return;
+                }
+
+                list.innerHTML = bildirimler.map(b => `
+                    <div class="update-item">
+                        <div class="update-title">📢 ${escapeHtml(b.title)}</div>
+                        <div class="update-content">${escapeHtml(b.message)}</div>
+                        <div class="update-meta">
+                            <span>Hedef: ${b.target === 'all' ? 'Tüm Kullanıcılar' : b.target === 'premium' ? 'Premium' : 'Ücretsiz'}</span>
+                            <span>${new Date(b.created_at).toLocaleDateString('tr-TR')}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error('Bildirim yükleme hatası:', err);
+            }
+        }
+
+        // XSS koruması
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         // Alert göster
