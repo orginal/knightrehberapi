@@ -147,28 +147,33 @@ app.post('/api/admin/send-notification', async (req, res) => {
 
 // Güncelleme notu ekle (Fallback)
 app.post('/api/admin/add-update', (req, res) => {
-  const { title, content, importance } = req.body;
+  try {
+    const { title, content, importance } = req.body;
 
-  if (!title || !content) {
-    return res.status(400).json({ error: 'Başlık ve içerik gerekli' });
+    if (!title || !content) {
+      return res.status(400).json({ success: false, error: 'Başlık ve içerik gerekli' });
+    }
+
+    const newUpdate = {
+      id: Date.now(),
+      title: title.trim(),
+      content: content.trim(),
+      importance: importance || 'normal',
+      date: new Date().toLocaleDateString('tr-TR'),
+      created_at: new Date().toISOString()
+    };
+
+    database.updateNotes.unshift(newUpdate);
+
+    res.json({
+      success: true,
+      message: 'Güncelleme notu başarıyla eklendi!',
+      update: newUpdate
+    });
+  } catch (error) {
+    console.error('Güncelleme ekleme hatası:', error);
+    res.status(500).json({ success: false, error: 'Güncelleme notu eklenirken hata oluştu' });
   }
-
-  const newUpdate = {
-    id: Date.now(),
-    title,
-    content,
-    importance: importance || 'normal',
-    date: new Date().toLocaleDateString('tr-TR'),
-    created_at: new Date().toISOString()
-  };
-
-  database.updateNotes.unshift(newUpdate);
-
-  res.json({
-    success: true,
-    message: 'Güncelleme notu eklendi',
-    update: newUpdate
-  });
 });
 
 // Nostalji fotoğrafı ekle (Fallback)
@@ -217,6 +222,29 @@ app.get('/api/admin/notifications', (req, res) => {
 // Güncelleme notlarını listele (Fallback)
 app.get('/api/admin/updates', (req, res) => {
   res.json(database.updateNotes.slice(0, 20));
+});
+
+// Güncelleme notu sil (Fallback)
+app.delete('/api/admin/delete-update/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateId = parseInt(id);
+
+    const index = database.updateNotes.findIndex(note => note.id === updateId);
+    if (index === -1) {
+      return res.status(404).json({ success: false, error: 'Güncelleme notu bulunamadı' });
+    }
+
+    database.updateNotes.splice(index, 1);
+
+    res.json({
+      success: true,
+      message: 'Güncelleme notu başarıyla silindi'
+    });
+  } catch (error) {
+    console.error('Güncelleme silme hatası:', error);
+    res.status(500).json({ success: false, error: 'Güncelleme notu silinirken hata oluştu' });
+  }
 });
 
 // Nostalji fotoğraflarını listele (Fallback)
