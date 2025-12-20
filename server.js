@@ -22,9 +22,51 @@ let guncellemeler = [
 ];
 
 let bildirimler = [];
+let userTokens = []; // Push token'ları saklamak için
 
 const ADMIN_USER = 'aga';
 const ADMIN_PASS = 'aga251643';
+
+// Expo Push Notification gönderme fonksiyonu
+async function sendExpoPushNotification(pushTokens, title, message) {
+  if (!pushTokens || pushTokens.length === 0) {
+    console.log('⚠️ Push token yok, bildirim gönderilemedi');
+    return { success: 0, failed: 0 };
+  }
+
+  try {
+    const messages = pushTokens.map(token => ({
+      to: token,
+      sound: 'default',
+      title: title,
+      body: message,
+      data: { title, message },
+      priority: 'high',
+      channelId: 'default'
+    }));
+
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(messages),
+    });
+
+    const result = await response.json();
+    console.log('📤 Expo Push Notification sonucu:', result);
+
+    const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
+    const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
+
+    return { success: successCount, failed: failedCount };
+  } catch (error) {
+    console.error('❌ Expo Push Notification hatası:', error);
+    return { success: 0, failed: pushTokens.length };
+  }
+}
 
 // ========== ADMIN API ==========
 
@@ -56,14 +98,38 @@ app.get('/api/admin/stats', (req, res) => {
     totalUsers: 0,
     activeUsers: 0,
     sentNotifications: bildirimler.length,
-    usersWithPushToken: 0,
+    usersWithPushToken: userTokens.length,
     appVersion: '1.0.0',
     appStatus: 'active'
   });
 });
 
+// Push token kaydet
+app.post('/api/push/register', (req, res) => {
+  try {
+    const { token } = req.body || {};
+    
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Token gerekli' });
+    }
+
+    const tokenStr = String(token).trim();
+    
+    // Token zaten varsa ekleme
+    if (!userTokens.includes(tokenStr)) {
+      userTokens.push(tokenStr);
+      console.log('✅ Yeni push token kaydedildi. Toplam:', userTokens.length);
+    }
+
+    res.json({ success: true, message: 'Token kaydedildi', totalTokens: userTokens.length });
+  } catch (error) {
+    console.error('Token kayıt hatası:', error);
+    res.status(500).json({ success: false, error: 'Hata: ' + error.message });
+  }
+});
+
 // Bildirim gönder
-app.post('/api/admin/send-notification', (req, res) => {
+app.post('/api/admin/send-notification', async (req, res) => {
   try {
     const { title, message, target } = req.body || {};
 
@@ -84,14 +150,21 @@ app.post('/api/admin/send-notification', (req, res) => {
 
     bildirimler.unshift(bildirim);
 
-    // Burada gerçek push notification servisi entegre edilebilir
-    // Şimdilik sadece kaydediyoruz
-    console.log('📤 Bildirim kaydedildi:', bildirim.title);
+    // Expo Push Notification gönder
+    let pushResult = { success: 0, failed: 0 };
+    if (userTokens.length > 0) {
+      console.log(`📤 ${userTokens.length} cihaza bildirim gönderiliyor...`);
+      pushResult = await sendExpoPushNotification(userTokens, bildirim.title, bildirim.message);
+      console.log(`✅ ${pushResult.success} başarılı, ❌ ${pushResult.failed} başarısız`);
+    } else {
+      console.log('⚠️ Kayıtlı push token yok, bildirim sadece kaydedildi');
+    }
 
     res.json({
       success: true,
-      message: 'Bildirim başarıyla gönderildi!',
-      notification: bildirim
+      message: `Bildirim gönderildi! ${pushResult.success} cihaza ulaştı.`,
+      notification: bildirim,
+      pushStats: pushResult
     });
   } catch (error) {
     console.error('Bildirim hatası:', error);
