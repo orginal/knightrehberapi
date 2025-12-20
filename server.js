@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 
@@ -22,10 +23,43 @@ let guncellemeler = [
 ];
 
 let bildirimler = [];
-let userTokens = []; // Push token'ları saklamak için
+let userTokens = []; // Fallback için (MongoDB bağlantısı yoksa)
 
 const ADMIN_USER = 'aga';
 const ADMIN_PASS = 'aga251643';
+
+// MongoDB bağlantısı
+const MONGODB_URI = process.env.MONGODB_URI || '';
+let mongoClient = null;
+let db = null;
+
+// MongoDB bağlantısını başlat
+async function connectToMongoDB() {
+  if (!MONGODB_URI) {
+    console.log('⚠️ MONGODB_URI environment variable bulunamadı, memory database kullanılacak');
+    return false;
+  }
+
+  try {
+    if (!mongoClient || !mongoClient.topology || !mongoClient.topology.isConnected()) {
+      mongoClient = new MongoClient(MONGODB_URI);
+      await mongoClient.connect();
+      // Connection string'den database adını çıkar veya varsayılan kullan
+      const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
+      db = mongoClient.db(dbName);
+      console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
+    }
+    return true;
+  } catch (error) {
+    console.error('❌ MongoDB bağlantı hatası:', error.message);
+    mongoClient = null;
+    db = null;
+    return false;
+  }
+}
+
+// Uygulama başlangıcında MongoDB'ye bağlan
+connectToMongoDB().catch(console.error);
 
 // Expo Push Notification gönderme fonksiyonu
 async function sendExpoPushNotification(pushTokens, title, message, imageUrl = null) {
@@ -94,19 +128,35 @@ app.post('/api/admin/login', (req, res) => {
   }
 });
 
-app.get('/api/admin/stats', (req, res) => {
+app.get('/api/admin/stats', async (req, res) => {
+  let tokenCount = 0;
+  
+  // MongoDB'den token sayısını al
+  const isMongoConnected = await connectToMongoDB();
+  if (isMongoConnected && db) {
+    try {
+      const tokensCollection = db.collection('push_tokens');
+      tokenCount = await tokensCollection.countDocuments();
+    } catch (error) {
+      console.error('❌ MongoDB token sayısı hatası:', error.message);
+      tokenCount = userTokens.length; // Fallback
+    }
+  } else {
+    tokenCount = userTokens.length; // Fallback
+  }
+  
   res.json({
     totalUsers: 0,
     activeUsers: 0,
     sentNotifications: bildirimler.length,
-    usersWithPushToken: userTokens.length,
+    usersWithPushToken: tokenCount,
     appVersion: '1.0.0',
     appStatus: 'active'
   });
 });
 
 // Push token kaydet
-app.post('/api/push/register', (req, res) => {
+app.post('/api/push/register', async (req, res) => {
   try {
     const { token } = req.body || {};
     
@@ -119,18 +169,51 @@ app.post('/api/push/register', (req, res) => {
 
     const tokenStr = String(token).trim();
     console.log('📝 Token uzunluğu:', tokenStr.length);
+    
+    // MongoDB'ye bağlanmayı dene
+    const isMongoConnected = await connectToMongoDB();
+    
+    if (isMongoConnected && db) {
+      // MongoDB'ye kaydet
+      try {
+        const tokensCollection = db.collection('push_tokens');
+        const result = await tokensCollection.updateOne(
+          { token: tokenStr },
+          { 
+            $set: { 
+              token: tokenStr,
+              updatedAt: new Date(),
+              lastSeen: new Date()
+            },
+            $setOnInsert: {
+              createdAt: new Date()
+            }
+          },
+          { upsert: true }
+        );
+        
+        const totalTokens = await tokensCollection.countDocuments();
+        console.log('✅ Push token MongoDB\'ye kaydedildi. Toplam:', totalTokens);
+        res.json({ success: true, message: 'Token kaydedildi', totalTokens });
+        return;
+      } catch (mongoError) {
+        console.error('❌ MongoDB kayıt hatası:', mongoError.message);
+        // Fallback: Memory database'ye kaydet
+      }
+    }
+    
+    // Fallback: Memory database
     console.log('📊 Mevcut token sayısı (kayıt öncesi):', userTokens.length);
     
-    // Token zaten varsa ekleme
     if (!userTokens.includes(tokenStr)) {
       userTokens.push(tokenStr);
-      console.log('✅ Yeni push token kaydedildi. Toplam:', userTokens.length);
+      console.log('✅ Yeni push token memory\'ye kaydedildi. Toplam:', userTokens.length);
     } else {
       console.log('⚠️ Token zaten kayıtlı');
     }
 
     console.log('📊 Token kayıt sonrası toplam:', userTokens.length);
-    res.json({ success: true, message: 'Token kaydedildi', totalTokens: userTokens.length });
+    res.json({ success: true, message: 'Token kaydedildi (memory)', totalTokens: userTokens.length });
   } catch (error) {
     console.error('❌ Token kayıt hatası:', error);
     res.status(500).json({ success: false, error: 'Hata: ' + error.message });
@@ -160,14 +243,35 @@ app.post('/api/admin/send-notification', async (req, res) => {
 
     bildirimler.unshift(bildirim);
 
-    // Expo Push Notification gönder
-    console.log('📊 Bildirim gönderilirken kayıtlı token sayısı:', userTokens.length);
-    console.log('📋 Token listesi:', userTokens);
+    // Expo Push Notification gönder - MongoDB'den token'ları al
+    let tokensToSend = [];
+    
+    // MongoDB'ye bağlanmayı dene
+    const isMongoConnected = await connectToMongoDB();
+    
+    if (isMongoConnected && db) {
+      try {
+        const tokensCollection = db.collection('push_tokens');
+        const tokens = await tokensCollection.find({}).toArray();
+        tokensToSend = tokens.map(t => t.token);
+        console.log('📊 MongoDB\'den token sayısı:', tokensToSend.length);
+      } catch (mongoError) {
+        console.error('❌ MongoDB token okuma hatası:', mongoError.message);
+        // Fallback: Memory database
+        tokensToSend = userTokens;
+      }
+    } else {
+      // Fallback: Memory database
+      tokensToSend = userTokens;
+      console.log('📊 Memory database\'den token sayısı:', tokensToSend.length);
+    }
+    
+    console.log('📋 Gönderilecek token listesi:', tokensToSend);
     
     let pushResult = { success: 0, failed: 0 };
-    if (userTokens.length > 0) {
-      console.log(`📤 ${userTokens.length} cihaza bildirim gönderiliyor...`);
-      pushResult = await sendExpoPushNotification(userTokens, bildirim.title, bildirim.message, bildirim.imageUrl);
+    if (tokensToSend.length > 0) {
+      console.log(`📤 ${tokensToSend.length} cihaza bildirim gönderiliyor...`);
+      pushResult = await sendExpoPushNotification(tokensToSend, bildirim.title, bildirim.message, bildirim.imageUrl);
       console.log(`✅ ${pushResult.success} başarılı, ❌ ${pushResult.failed} başarısız`);
     } else {
       console.log('⚠️ Kayıtlı push token yok, bildirim sadece kaydedildi');
