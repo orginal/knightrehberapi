@@ -110,21 +110,29 @@ app.post('/api/push/register', (req, res) => {
   try {
     const { token } = req.body || {};
     
+    console.log('📱 Push token kayıt isteği geldi:', token ? 'Token var' : 'Token yok');
+    
     if (!token) {
+      console.log('❌ Token gerekli');
       return res.status(400).json({ success: false, error: 'Token gerekli' });
     }
 
     const tokenStr = String(token).trim();
+    console.log('📝 Token uzunluğu:', tokenStr.length);
+    console.log('📊 Mevcut token sayısı (kayıt öncesi):', userTokens.length);
     
     // Token zaten varsa ekleme
     if (!userTokens.includes(tokenStr)) {
       userTokens.push(tokenStr);
       console.log('✅ Yeni push token kaydedildi. Toplam:', userTokens.length);
+    } else {
+      console.log('⚠️ Token zaten kayıtlı');
     }
 
+    console.log('📊 Token kayıt sonrası toplam:', userTokens.length);
     res.json({ success: true, message: 'Token kaydedildi', totalTokens: userTokens.length });
   } catch (error) {
-    console.error('Token kayıt hatası:', error);
+    console.error('❌ Token kayıt hatası:', error);
     res.status(500).json({ success: false, error: 'Hata: ' + error.message });
   }
 });
@@ -153,6 +161,9 @@ app.post('/api/admin/send-notification', async (req, res) => {
     bildirimler.unshift(bildirim);
 
     // Expo Push Notification gönder
+    console.log('📊 Bildirim gönderilirken kayıtlı token sayısı:', userTokens.length);
+    console.log('📋 Token listesi:', userTokens);
+    
     let pushResult = { success: 0, failed: 0 };
     if (userTokens.length > 0) {
       console.log(`📤 ${userTokens.length} cihaza bildirim gönderiliyor...`);
@@ -160,6 +171,7 @@ app.post('/api/admin/send-notification', async (req, res) => {
       console.log(`✅ ${pushResult.success} başarılı, ❌ ${pushResult.failed} başarısız`);
     } else {
       console.log('⚠️ Kayıtlı push token yok, bildirim sadece kaydedildi');
+      console.log('💡 APK\'yı açın ve bildirim izni verin, token otomatik kaydedilecek');
     }
 
     res.json({

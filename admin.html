@@ -153,6 +153,10 @@
                 <div class="stat-label">Bildirim</div>
             </div>
             <div class="stat-card">
+                <div class="stat-number" id="pushTokens">0</div>
+                <div class="stat-label">Push Token</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-number">1.0.0</div>
                 <div class="stat-label">Versiyon</div>
             </div>
@@ -250,6 +254,7 @@
                 const data = await res.json();
                 document.getElementById('activeUsers').textContent = data.activeUsers || 0;
                 document.getElementById('sentNotifications').textContent = data.sentNotifications || 0;
+                document.getElementById('pushTokens').textContent = data.usersWithPushToken || 0;
             } catch (err) {
                 console.error('İstatistik hatası:', err);
             }
