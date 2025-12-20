@@ -28,7 +28,7 @@ const ADMIN_USER = 'aga';
 const ADMIN_PASS = 'aga251643';
 
 // Expo Push Notification gönderme fonksiyonu
-async function sendExpoPushNotification(pushTokens, title, message) {
+async function sendExpoPushNotification(pushTokens, title, message, imageUrl = null) {
   if (!pushTokens || pushTokens.length === 0) {
     console.log('⚠️ Push token yok, bildirim gönderilemedi');
     return { success: 0, failed: 0 };
@@ -40,9 +40,10 @@ async function sendExpoPushNotification(pushTokens, title, message) {
       sound: 'default',
       title: title,
       body: message,
-      data: { title, message },
+      data: { title, message, imageUrl },
       priority: 'high',
-      channelId: 'default'
+      channelId: 'default',
+      ...(imageUrl && { _displayInForeground: true })
     }));
 
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -145,6 +146,7 @@ app.post('/api/admin/send-notification', async (req, res) => {
       title: String(title).trim(),
       message: String(message).trim(),
       target: target || 'all',
+      imageUrl: req.body.imageUrl ? String(req.body.imageUrl).trim() : null,
       created_at: new Date().toISOString()
     };
 
@@ -154,7 +156,7 @@ app.post('/api/admin/send-notification', async (req, res) => {
     let pushResult = { success: 0, failed: 0 };
     if (userTokens.length > 0) {
       console.log(`📤 ${userTokens.length} cihaza bildirim gönderiliyor...`);
-      pushResult = await sendExpoPushNotification(userTokens, bildirim.title, bildirim.message);
+      pushResult = await sendExpoPushNotification(userTokens, bildirim.title, bildirim.message, bildirim.imageUrl);
       console.log(`✅ ${pushResult.success} başarılı, ❌ ${pushResult.failed} başarısız`);
     } else {
       console.log('⚠️ Kayıtlı push token yok, bildirim sadece kaydedildi');
@@ -186,7 +188,7 @@ app.get('/api/admin/updates', (req, res) => {
 
 app.post('/api/admin/add-update', (req, res) => {
   try {
-    const { title, content, importance } = req.body || {};
+    const { title, content, importance, imageUrl } = req.body || {};
 
     if (!title || !content) {
       return res.status(400).json({
@@ -200,6 +202,7 @@ app.post('/api/admin/add-update', (req, res) => {
       title: String(title).trim(),
       content: String(content).trim(),
       importance: importance || 'normal',
+      imageUrl: imageUrl ? String(imageUrl).trim() : null,
       date: new Date().toLocaleDateString('tr-TR'),
       created_at: new Date().toISOString()
     };

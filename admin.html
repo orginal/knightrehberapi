@@ -169,6 +169,7 @@
 
         <input type="text" id="notificationTitle" placeholder="Bildirim Başlığı">
         <textarea id="notificationMessage" placeholder="Bildirim Mesajı"></textarea>
+        <input type="url" id="notificationImageUrl" placeholder="📷 Resim URL'si (isteğe bağlı)">
         <select id="notificationTarget">
             <option value="all">👥 Tüm Kullanıcılar</option>
             <option value="premium">⭐ Premium Kullanıcılar</option>
@@ -186,6 +187,7 @@
 
         <input type="text" id="updateTitle" placeholder="Başlık">
         <textarea id="updateContent" placeholder="İçerik"></textarea>
+        <input type="url" id="updateImageUrl" placeholder="📷 Resim URL'si (isteğe bağlı)">
         <select id="updateImportance">
             <option value="normal">Normal</option>
             <option value="yuksek">Yüksek Önem</option>
@@ -272,6 +274,7 @@
                 list.innerHTML = guncellemeler.map(g => `
                     <div class="update-item">
                         <div class="update-title">${g.importance === 'yuksek' ? '❗ ' : '📢 '}${escapeHtml(g.title)}</div>
+                        ${g.imageUrl ? `<img src="${escapeHtml(g.imageUrl)}" alt="Güncelleme resmi" style="max-width: 100%; margin: 10px 0; border-radius: 8px;" onerror="this.style.display='none'">` : ''}
                         <div class="update-content">${escapeHtml(g.content)}</div>
                         <div class="update-meta">
                             <span>${g.importance === 'yuksek' ? 'Yüksek Önem' : 'Normal'}</span>
@@ -290,6 +293,7 @@
         async function guncellemeEkle() {
             const title = document.getElementById('updateTitle').value;
             const content = document.getElementById('updateContent').value;
+            const imageUrl = document.getElementById('updateImageUrl').value.trim();
             const importance = document.getElementById('updateImportance').value;
 
             if (!title || !content) {
@@ -303,7 +307,7 @@
                     headers: { 
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ title, content, importance })
+                    body: JSON.stringify({ title, content, importance, imageUrl: imageUrl || null })
                 });
                 if (!res.ok) throw new Error('Ekleme başarısız: ' + res.status);
 
@@ -313,6 +317,7 @@
                     gosterAlert('updateAlert', '✅ ' + data.message, 'success');
                     document.getElementById('updateTitle').value = '';
                     document.getElementById('updateContent').value = '';
+                    document.getElementById('updateImageUrl').value = '';
                     guncellemeleriYukle();
                 } else {
                     gosterAlert('updateAlert', '❌ ' + (data.error || 'Hata!'), 'error');
@@ -349,6 +354,7 @@
         async function bildirimGonder() {
             const title = document.getElementById('notificationTitle').value;
             const message = document.getElementById('notificationMessage').value;
+            const imageUrl = document.getElementById('notificationImageUrl').value.trim();
             const target = document.getElementById('notificationTarget').value;
 
             if (!title || !message) {
@@ -360,7 +366,7 @@
                 const res = await fetch(API_URL + '/admin/send-notification', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ title, message, target })
+                    body: JSON.stringify({ title, message, target, imageUrl: imageUrl || null })
                 });
 
                 const data = await res.json();
@@ -369,6 +375,7 @@
                     gosterAlert('notificationAlert', '✅ ' + data.message, 'success');
                     document.getElementById('notificationTitle').value = '';
                     document.getElementById('notificationMessage').value = '';
+                    document.getElementById('notificationImageUrl').value = '';
                     bildirimleriYukle();
                     istatistikleriYukle();
                 } else {
@@ -394,6 +401,7 @@
                 list.innerHTML = bildirimler.map(b => `
                     <div class="update-item">
                         <div class="update-title">📢 ${escapeHtml(b.title)}</div>
+                        ${b.imageUrl ? `<img src="${escapeHtml(b.imageUrl)}" alt="Bildirim resmi" style="max-width: 100%; margin: 10px 0; border-radius: 8px;" onerror="this.style.display='none'">` : ''}
                         <div class="update-content">${escapeHtml(b.message)}</div>
                         <div class="update-meta">
                             <span>Hedef: ${b.target === 'all' ? 'Tüm Kullanıcılar' : b.target === 'premium' ? 'Premium' : 'Ücretsiz'}</span>
