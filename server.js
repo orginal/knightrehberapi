@@ -11,13 +11,17 @@ try {
   if (globalThis.fetch) {
     fetch = globalThis.fetch;
   } else {
-    fetch = require('node-fetch');
+    // node-fetch kullanmaya çalış, yoksa null olarak kal
+    try {
+      fetch = require('node-fetch');
+    } catch (e) {
+      fetch = null;
+    }
   }
 } catch (e) {
   // node-fetch yoksa, https/http ile manuel fetch yapacağız
   fetch = null;
 }
-const fetch = require('node-fetch');
 
 const app = express();
 
