@@ -5,22 +5,12 @@ const { MongoClient } = require('mongodb');
 const https = require('https');
 const http = require('http');
 
-// Fetch için güvenli fallback (Node.js 18+ built-in, yoksa node-fetch veya https/http kullan)
+// Fetch kullanımı - Node.js 18+ built-in fetch varsa kullan, yoksa Imgur album handling devre dışı
 let fetch;
-try {
-  if (globalThis.fetch) {
-    fetch = globalThis.fetch;
-  } else {
-    // node-fetch kullanmaya çalış, yoksa null olarak kal
-    try {
-      fetch = require('node-fetch');
-    } catch (e) {
-      fetch = null;
-    }
-  }
-} catch (e) {
-  // node-fetch yoksa, https/http ile manuel fetch yapacağız
-  fetch = null;
+if (typeof globalThis.fetch !== 'undefined') {
+  fetch = globalThis.fetch;
+} else {
+  fetch = null; // fetch yoksa Imgur album handling çalışmayacak
 }
 
 const app = express();
