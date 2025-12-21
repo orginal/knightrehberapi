@@ -128,6 +128,37 @@ app.post('/api/admin/login', (req, res) => {
   }
 });
 
+// MongoDB durum kontrolü (test için)
+app.get('/api/admin/mongo-status', async (req, res) => {
+  try {
+    const isMongoConnected = await connectToMongoDB();
+    const hasEnv = !!process.env.MONGODB_URI;
+    
+    let tokenCount = 0;
+    let tokens = [];
+    
+    if (isMongoConnected && db) {
+      try {
+        const tokensCollection = db.collection('push_tokens');
+        tokenCount = await tokensCollection.countDocuments();
+        tokens = await tokensCollection.find({}).limit(5).toArray();
+      } catch (error) {
+        console.error('❌ MongoDB token okuma hatası:', error.message);
+      }
+    }
+    
+    res.json({
+      hasMongoUri: hasEnv,
+      isConnected: isMongoConnected,
+      tokenCount,
+      sampleTokens: tokens.map(t => t.token.substring(0, 20) + '...'),
+      memoryTokens: userTokens.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/admin/stats', async (req, res) => {
   let tokenCount = 0;
   
