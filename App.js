@@ -546,14 +546,29 @@ const AuthProvider = ({ children }) => {
                 // Token'ı backend'e gönder
                 try {
                   console.log('📤 Token backend\'e gönderiliyor...');
+                  console.log('📤 Token değeri:', pushToken);
+                  console.log('📤 Backend URL:', 'https://knightrehberapi.vercel.app/api/push/register');
+                  
                   const response = await fetch('https://knightrehberapi.vercel.app/api/push/register', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                      'Content-Type': 'application/json',
+                      'Accept': 'application/json'
+                    },
                     body: JSON.stringify({ token: pushToken })
                   });
                   
+                  console.log('📤 Backend response status:', response.status);
+                  console.log('📤 Backend response ok:', response.ok);
+                  
+                  if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('❌ Backend hata yanıtı:', errorText);
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                  }
+                  
                   const result = await response.json();
-                  console.log('📤 Backend yanıtı:', result);
+                  console.log('📤 Backend yanıtı (JSON):', JSON.stringify(result, null, 2));
                   
                   if (result.success) {
                     console.log('✅ Push token backend\'e kaydedildi. Toplam token:', result.totalTokens || 'bilinmiyor');
@@ -562,7 +577,10 @@ const AuthProvider = ({ children }) => {
                   }
                 } catch (error) {
                   console.error('❌ Push token gönderme hatası:', error);
-                  console.error('❌ Hata detayı:', error.message);
+                  console.error('❌ Hata tipi:', error.constructor.name);
+                  console.error('❌ Hata mesajı:', error.message);
+                  console.error('❌ Hata stack:', error.stack);
+                  // Hata olsa bile uygulamayı devam ettir
                 }
               } catch (tokenError) {
                 console.error('❌ Expo Push Token alma hatası:', tokenError);
@@ -573,7 +591,10 @@ const AuthProvider = ({ children }) => {
             }
           } catch (error) {
             console.error('❌ Push notification setup error:', error);
+            console.error('❌ Hata tipi:', error.constructor.name);
+            console.error('❌ Hata mesajı:', error.message);
             console.error('❌ Hata stack:', error.stack);
+            // Hata olsa bile uygulamayı devam ettir
           }
         }
 
