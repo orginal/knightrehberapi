@@ -587,6 +587,35 @@
             }
         }
 
+        // Sekme değiştirme
+        function switchTab(tabName) {
+            // Tüm sekmeleri gizle
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.style.display = 'none';
+            });
+            
+            // Tüm sekme butonlarını pasif yap
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.style.background = '#2D3748';
+                btn.style.color = '#FFD66B';
+            });
+            
+            // Seçili sekmeyi göster
+            const contentId = 'tabContent' + tabName.charAt(0).toUpperCase() + tabName.slice(1);
+            const contentElement = document.getElementById(contentId);
+            if (contentElement) {
+                contentElement.style.display = 'block';
+            }
+            
+            // Seçili sekme butonunu aktif yap
+            const buttonId = 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1);
+            const activeBtn = document.getElementById(buttonId);
+            if (activeBtn) {
+                activeBtn.style.background = '#FFD66B';
+                activeBtn.style.color = '#1a1a2e';
+            }
+        }
+
         // XSS koruması
         function escapeHtml(text) {
             const div = document.createElement('div');
