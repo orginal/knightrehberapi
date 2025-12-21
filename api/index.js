@@ -386,8 +386,8 @@ app.get('/api/image-proxy', async (req, res) => {
       return res.status(400).json({ error: 'Sadece HTTP ve HTTPS URL\'leri desteklenir' });
     }
     
-    // Imgur album linklerini handle et
-    if (imageUrl.includes('imgur.com/a/')) {
+    // Imgur album linklerini handle et - fetch yoksa skip et, direkt proxy kullan
+    if (imageUrl.includes('imgur.com/a/') && fetch) {
       try {
         // Album sayfasını fetch et
         const albumResponse = await fetch(imageUrl, {
@@ -409,28 +409,10 @@ app.get('/api/image-proxy', async (req, res) => {
           const directImageUrl = ogImageMatch[1];
           console.log('Imgur album\'den görsel bulundu:', directImageUrl);
           
-          // Direkt görsel URL'ini proxy üzerinden aç
-          const imageResponse = await fetch(directImageUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Referer': 'https://imgur.com/'
-            }
-          });
-          
-          if (!imageResponse.ok) {
-            throw new Error(`Görsel yüklenemedi: ${imageResponse.status}`);
-          }
-          
-          // CORS header'ları ekle
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET');
-          res.setHeader('Content-Type', imageResponse.headers.get('content-type') || 'image/jpeg');
-          res.setHeader('Cache-Control', 'public, max-age=86400');
-          
-          // Görseli buffer olarak al ve gönder
-          const buffer = await imageResponse.buffer();
-          res.send(buffer);
-          return;
+          // Direkt görsel URL'ini proxy üzerinden aç (tekrar proxy endpoint'ine yönlendir)
+          // Bu şekilde tek bir görsel için proxy kullanılır
+          const baseUrl = `https://${req.get('host')}`;
+          return res.redirect(`${baseUrl}/api/image-proxy?url=${encodeURIComponent(directImageUrl)}`);
         }
         
         // Eski format: JSON data içinde görsel URL'i
@@ -443,12 +425,8 @@ app.get('/api/image-proxy', async (req, res) => {
               : null;
             
             if (imageUrl) {
-              const imageResponse = await fetch(imageUrl);
-              const buffer = await imageResponse.buffer();
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.setHeader('Content-Type', 'image/jpeg');
-              res.send(buffer);
-              return;
+              const baseUrl = `https://${req.get('host')}`;
+              return res.redirect(`${baseUrl}/api/image-proxy?url=${encodeURIComponent(imageUrl)}`);
             }
           } catch (e) {
             console.error('JSON parse hatası:', e);
@@ -458,7 +436,7 @@ app.get('/api/image-proxy', async (req, res) => {
         throw new Error('Album sayfasından görsel URL\'i bulunamadı');
       } catch (albumError) {
         console.error('Imgur album hatası:', albumError);
-        return res.status(500).json({ error: 'Imgur album\'den görsel alınamadı: ' + albumError.message });
+        // Hata olsa bile normal proxy'ye devam et
       }
     }
     
