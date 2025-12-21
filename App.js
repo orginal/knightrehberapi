@@ -518,9 +518,16 @@ const AuthProvider = ({ children }) => {
               
               try {
                 // Token options - Standalone APK'lar için experienceId ZORUNLU
-                const tokenOptions = {
-                  projectId: '00989cea-c84c-4189-964d-562e6b7e3c16'
-                };
+                // projectId Expo Constants'tan otomatik alınır (build sırasında eklenir)
+                const tokenOptions = {};
+                
+                // EAS projectId varsa ekle (build sırasında otomatik eklenir)
+                if (Constants.expoConfig?.extra?.eas?.projectId) {
+                  tokenOptions.projectId = Constants.expoConfig.extra.eas.projectId;
+                  console.log('📱 ProjectId bulundu:', tokenOptions.projectId);
+                } else {
+                  console.log('⚠️ ProjectId bulunamadı, Expo otomatik kullanacak');
+                }
                 
                 // Standalone APK'lar için experienceId HER ZAMAN ekle
                 // Expo Go'da da zarar vermez, ama standalone APK'da olmadan çalışmaz
