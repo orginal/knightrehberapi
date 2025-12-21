@@ -47,10 +47,6 @@ let mongoClient = null;
 let db = null;
 
 // MongoDB bağlantısını başlat (Vercel serverless için optimize)
-// Vercel serverless'ta her istek yeni bir instance olduğu için connection pooling önemli
-let cachedClient = null;
-let cachedDb = null;
-
 async function connectToMongoDB() {
   if (!MONGODB_URI) {
     console.error('⚠️ MONGODB_URI environment variable bulunamadı. Vercel dashboard\'da Environment Variables bölümünden ekleyin.');
@@ -58,17 +54,17 @@ async function connectToMongoDB() {
   }
 
   try {
-    // Eğer cached client varsa ve bağlıysa onu kullan (aynı serverless instance içinde)
-    if (cachedClient && cachedDb) {
+    // Eğer mevcut client varsa ve bağlıysa onu kullan
+    if (mongoClient && db) {
       try {
         // Ping ile bağlantının hala aktif olduğunu kontrol et
-        await cachedClient.db('admin').command({ ping: 1 });
+        await mongoClient.db('admin').command({ ping: 1 });
         return true;
       } catch (pingError) {
         // Ping başarısız olduysa bağlantıyı temizle ve yeniden oluştur
-        console.log('⚠️ Cached MongoDB bağlantısı kopmuş, yeniden bağlanılıyor...');
-        cachedClient = null;
-        cachedDb = null;
+        console.log('⚠️ MongoDB bağlantısı kopmuş, yeniden bağlanılıyor...');
+        mongoClient = null;
+        db = null;
       }
     }
     
@@ -86,19 +82,13 @@ async function connectToMongoDB() {
     const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
     db = mongoClient.db(dbName);
     
-    // Cache'e kaydet
-    cachedClient = mongoClient;
-    cachedDb = db;
-    
     console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
     return true;
   } catch (error) {
     console.error('❌ MongoDB bağlantı hatası:', error.message);
-    console.error('❌ MONGODB_URI:', MONGODB_URI ? MONGODB_URI.substring(0, 20) + '...' : 'YOK');
+    console.error('❌ Hata detayı:', error);
     mongoClient = null;
     db = null;
-    cachedClient = null;
-    cachedDb = null;
     return false;
   }
 }
