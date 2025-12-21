@@ -27,18 +27,27 @@ let db = null;
 
 async function connectToMongoDB() {
   if (!MONGODB_URI) {
-    console.log('⚠️ MONGODB_URI environment variable bulunamadı, memory database kullanılacak');
+    console.log('⚠️ MONGODB_URI environment variable bulunamadı');
     return false;
   }
 
   try {
-    if (!mongoClient || !mongoClient.topology || !mongoClient.topology.isConnected()) {
-      mongoClient = new MongoClient(MONGODB_URI);
-      await mongoClient.connect();
-      const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
-      db = mongoClient.db(dbName);
-      console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
+    // Vercel serverless'ta her istekte yeni connection oluşturma riski var
+    // Ama mevcut connection varsa ve bağlıysa tekrar kullan
+    if (mongoClient && mongoClient.topology && mongoClient.topology.isConnected()) {
+      return true;
     }
+    
+    // Yeni connection oluştur
+    mongoClient = new MongoClient(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000, // 5 saniye timeout
+      connectTimeoutMS: 5000
+    });
+    
+    await mongoClient.connect();
+    const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
+    db = mongoClient.db(dbName);
+    console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
     return true;
   } catch (error) {
     console.error('❌ MongoDB bağlantı hatası:', error.message);

@@ -46,22 +46,31 @@ const MONGODB_URI = process.env.MONGODB_URI || '';
 let mongoClient = null;
 let db = null;
 
-// MongoDB bağlantısını başlat
+// MongoDB bağlantısını başlat (Vercel serverless için optimize)
 async function connectToMongoDB() {
   if (!MONGODB_URI) {
-    console.log('⚠️ MONGODB_URI environment variable bulunamadı, memory database kullanılacak');
+    console.log('⚠️ MONGODB_URI environment variable bulunamadı');
     return false;
   }
 
   try {
-    if (!mongoClient || !mongoClient.topology || !mongoClient.topology.isConnected()) {
-      mongoClient = new MongoClient(MONGODB_URI);
-      await mongoClient.connect();
-      // Connection string'den database adını çıkar veya varsayılan kullan
-      const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
-      db = mongoClient.db(dbName);
-      console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
+    // Vercel serverless'ta her istekte yeni connection oluşturma riski var
+    // Ama mevcut connection varsa ve bağlıysa tekrar kullan
+    if (mongoClient && mongoClient.topology && mongoClient.topology.isConnected()) {
+      return true;
     }
+    
+    // Yeni connection oluştur
+    mongoClient = new MongoClient(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000, // 5 saniye timeout
+      connectTimeoutMS: 5000
+    });
+    
+    await mongoClient.connect();
+    // Connection string'den database adını çıkar veya varsayılan kullan
+    const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
+    db = mongoClient.db(dbName);
+    console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
     return true;
   } catch (error) {
     console.error('❌ MongoDB bağlantı hatası:', error.message);
@@ -754,21 +763,30 @@ app.post('/api/admin/banner', async (req, res) => {
       updatedAt: new Date().toISOString()
     };
     
-    // MongoDB'ye kaydet (yeni banner olarak ekle, update değil)
+    // MongoDB'ye kaydet (ZORUNLU - Vercel serverless için)
     if (isMongoConnected && db) {
       try {
         const bannersCollection = db.collection('reklam_bannerlar');
         await bannersCollection.insertOne(banner);
         console.log('✅ Banner MongoDB\'ye kaydedildi:', banner.position, 'Toplam:', bannerCount + 1);
+        
+        // Başarılı olduysa response döndür
+        return res.json({ success: true, message: 'Banner kaydedildi', banner, totalBanners: bannerCount + 1 });
       } catch (error) {
-        console.error('MongoDB banner kayıt hatası:', error);
+        console.error('❌ MongoDB banner kayıt hatası:', error);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Banner kaydedilemedi: ' + error.message + '. Lütfen MongoDB bağlantısını kontrol edin.' 
+        });
       }
+    } else {
+      // MongoDB bağlantısı yoksa hata döndür (Vercel'de memory database çalışmaz)
+      console.error('❌ MongoDB bağlantısı yok!');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'MongoDB bağlantısı yok. Banner kaydedilemedi. Lütfen MONGODB_URI environment variable\'ını kontrol edin.' 
+      });
     }
-    
-    // Memory database'ye ekle
-    reklamBannerlar.push(banner);
-    
-    res.json({ success: true, message: 'Banner kaydedildi', banner, totalBanners: bannerCount + 1 });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
