@@ -22,6 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
 import AlarmScreen from './src/screens/AlarmScreen';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 // Bildirim handler - bildirim geldiğinde bir sonraki gün için yeniden zamanla
@@ -516,9 +517,26 @@ const AuthProvider = ({ children }) => {
               console.log('✅ Bildirim izni verildi, token alınıyor...');
               
               try {
-                const tokenData = await Notifications.getExpoPushTokenAsync({
+                // Token options - Standalone APK'lar için experienceId ZORUNLU
+                const tokenOptions = {
                   projectId: '00989cea-c84c-4189-964d-562e6b7e3c16'
-                });
+                };
+                
+                // Standalone APK'lar için experienceId HER ZAMAN ekle
+                // Expo Go'da da zarar vermez, ama standalone APK'da olmadan çalışmaz
+                if (Platform.OS === 'android') {
+                  tokenOptions.experienceId = '@mike0835/knight-rehber';
+                  console.log('📱 Android cihaz - experienceId eklendi:', tokenOptions.experienceId);
+                }
+                
+                // Debug bilgileri
+                console.log('📱 Token options:', JSON.stringify(tokenOptions));
+                console.log('📱 App ownership:', Constants.appOwnership);
+                console.log('📱 Execution environment:', Constants.executionEnvironment);
+                console.log('📱 Platform:', Platform.OS);
+                console.log('📱 App version:', Constants.expoConfig?.version || 'unknown');
+                
+                const tokenData = await Notifications.getExpoPushTokenAsync(tokenOptions);
                 const pushToken = tokenData.data;
                 console.log('✅ Expo Push Token alındı:', pushToken);
                 console.log('📱 Token uzunluğu:', pushToken.length);
