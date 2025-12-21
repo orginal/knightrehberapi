@@ -166,10 +166,18 @@
             </div>
         </div>
 
+        <!-- SEKMELER -->
+        <div style="display: flex; gap: 10px; margin: 30px 0 20px 0; border-bottom: 2px solid #2D3748;">
+            <button id="tabBanner" class="tab-button active" onclick="switchTab('banner')" style="flex: 1; padding: 12px; background: #FFD66B; color: #1a1a2e; border: none; border-radius: 8px 8px 0 0; font-weight: bold; cursor: pointer;">🖼️ Banner'lar</button>
+            <button id="tabNotification" class="tab-button" onclick="switchTab('notification')" style="flex: 1; padding: 12px; background: #2D3748; color: #FFD66B; border: none; border-radius: 8px 8px 0 0; font-weight: bold; cursor: pointer;">📢 Bildirimler</button>
+            <button id="tabUpdate" class="tab-button" onclick="switchTab('update')" style="flex: 1; padding: 12px; background: #2D3748; color: #FFD66B; border: none; border-radius: 8px 8px 0 0; font-weight: bold; cursor: pointer;">📝 Güncelleme Notları</button>
+        </div>
+
         <!-- REKLAM BANNER YÖNETİMİ -->
+        <div id="tabContentBanner" class="tab-content">
         <h2 style="color: #FFD66B; margin: 30px 0 20px 0;">🖼️ Reklam Banner Yönetimi</h2>
         <p style="color: #8E97A8; margin-bottom: 20px; font-size: 14px;">
-            Her pozisyon için maksimum 5 banner ekleyebilirsiniz. Mobil uygulamada en son eklenen aktif banner gösterilir.
+            Her pozisyon için maksimum 10 banner ekleyebilirsiniz. Mobil uygulamada tüm aktif banner'lar sırayla alt alta gösterilir.
         </p>
         
         <div id="bannerAlert" class="alert"></div>
@@ -184,7 +192,10 @@
             <option value="chardiz">📐 Char Diz</option>
         </select>
         
-        <input type="url" id="bannerImageUrl" placeholder="📷 Banner Görsel URL'si (zorunlu)">
+        <input type="url" id="bannerImageUrl" placeholder="📷 Banner Görsel URL'si (zorunlu - direkt görsel linki, örn: https://i.imgur.com/xxxxx.jpg)">
+        <p style="color: #8E97A8; font-size: 12px; margin: -5px 0 10px 0;">
+            ⚠️ Imgur album linki (imgur.com/a/...) veya ImageBB sayfa linki (ibb.co/...) yerine direkt görsel linki kullanın (i.imgur.com/... veya i.ibb.co/...)
+        </p>
         <input type="url" id="bannerClickUrl" placeholder="🔗 Tıklama Linki (isteğe bağlı)">
         <button onclick="bannerKaydet()">💾 Banner Kaydet</button>
 
@@ -527,7 +538,7 @@
                     const banners = groupedBanners[position];
                     return `
                         <div style="margin-bottom: 30px;">
-                            <h4 style="color: #FFD66B; margin-bottom: 15px;">${positionNames[position] || position} (${banners.length}/5)</h4>
+                            <h4 style="color: #FFD66B; margin-bottom: 15px;">${positionNames[position] || position} (${banners.length}/10)</h4>
                             ${banners.map(b => `
                                 <div class="update-item" style="margin-bottom: 15px;">
                                     <div class="update-title">Banner #${b.id}</div>

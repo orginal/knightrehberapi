@@ -395,33 +395,32 @@ app.get('/api/guncelleme-notlari', (req, res) => {
   res.json(guncellemeler.slice(0, 10));
 });
 
-// Reklam Banner API - En son eklenen aktif banner'ı döndür
+// Reklam Banner API - Tüm aktif banner'ları döndür (sırayla gösterilecek)
 app.get('/api/reklam-banner/:position', async (req, res) => {
   try {
     const position = req.params.position;
     
-    // MongoDB'den al - en son eklenen aktif banner
+    // MongoDB'den al - tüm aktif banner'lar
     const isMongoConnected = await connectToMongoDB();
     if (isMongoConnected && db) {
       try {
         const bannersCollection = db.collection('reklam_bannerlar');
-        const banner = await bannersCollection
-          .findOne(
-            { position, active: true },
-            { sort: { createdAt: -1 } } // En son eklenen
-          );
-        if (banner) {
-          return res.json(banner);
+        const banners = await bannersCollection
+          .find({ position, active: true })
+          .sort({ createdAt: -1 }) // En yeni önce
+          .toArray();
+        if (banners && banners.length > 0) {
+          return res.json({ banners });
         }
       } catch (error) {
         console.error('MongoDB banner okuma hatası:', error);
       }
     }
     
-    // Fallback: Memory database - en son eklenen
+    // Fallback: Memory database - tüm aktif banner'lar
     const banners = reklamBannerlar.filter(b => b.position === position && b.active);
-    const banner = banners.length > 0 ? banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] : null;
-    res.json(banner || null);
+    const sortedBanners = banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json({ banners: sortedBanners });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -487,11 +486,23 @@ app.delete('/api/admin/banner/:id', async (req, res) => {
   }
 });
 
-// Imgur album linkini direkt görsel linkine çevir
-function convertImgurUrl(url) {
+// Imgur ve ImageBB linklerini direkt görsel linkine çevir
+function convertImageUrl(url) {
   if (!url || typeof url !== 'string') return url;
   
   const trimmedUrl = url.trim();
+  
+  // ImageBB linki: https://ibb.co/xxxxx -> direkt görsel linki önerilir
+  // ImageBB linkleri genellikle direkt görsel linki olarak kullanılmalı
+  if (trimmedUrl.includes('ibb.co')) {
+    // Eğer zaten i.ibb.co formatındaysa (direkt görsel linki) olduğu gibi döndür
+    if (trimmedUrl.includes('i.ibb.co')) {
+      return trimmedUrl;
+    }
+    // ibb.co/xxxxx formatındaysa kullanıcıya direkt görsel linki kullanmasını söyle
+    console.warn('ImageBB linki kullanıldı, direkt görsel linki önerilir:', trimmedUrl);
+    return trimmedUrl;
+  }
   
   // Imgur album linki: https://imgur.com/a/xxxxx -> https://i.imgur.com/xxxxx.jpg
   const albumMatch = trimmedUrl.match(/imgur\.com\/a\/([a-zA-Z0-9]+)/);
@@ -532,10 +543,10 @@ app.post('/api/admin/banner', async (req, res) => {
         const bannersCollection = db.collection('reklam_bannerlar');
         bannerCount = await bannersCollection.countDocuments({ position: String(position).trim() });
         
-        if (bannerCount >= 5) {
+        if (bannerCount >= 10) {
           return res.status(400).json({ 
             success: false, 
-            error: 'Bu position için maksimum 5 banner eklenebilir. Önce bir banner silin.' 
+            error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
           });
         }
       } catch (error) {
@@ -544,16 +555,16 @@ app.post('/api/admin/banner', async (req, res) => {
     } else {
       // Fallback: Memory database
       bannerCount = reklamBannerlar.filter(b => b.position === String(position).trim()).length;
-      if (bannerCount >= 5) {
+      if (bannerCount >= 10) {
         return res.status(400).json({ 
           success: false, 
-          error: 'Bu position için maksimum 5 banner eklenebilir. Önce bir banner silin.' 
+          error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
         });
       }
     }
     
-    // Imgur URL'ini düzelt
-    const convertedImageUrl = imageUrl ? convertImgurUrl(imageUrl) : null;
+    // Imgur/ImageBB URL'ini düzelt
+    const convertedImageUrl = imageUrl ? convertImageUrl(imageUrl) : null;
     
     const banner = {
       id: Date.now(),
