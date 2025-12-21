@@ -525,7 +525,7 @@ const AuthProvider = ({ children }) => {
                 // Standalone APK'lar için experienceId HER ZAMAN ekle
                 // Expo Go'da da zarar vermez, ama standalone APK'da olmadan çalışmaz
                 if (Platform.OS === 'android') {
-                  tokenOptions.experienceId = '@mike0835/knight-rehber';
+                  tokenOptions.experienceId = '@ceylan26/knight-rehber';
                   console.log('📱 Android cihaz - experienceId eklendi:', tokenOptions.experienceId);
                 }
                 

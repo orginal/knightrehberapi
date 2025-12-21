@@ -5,35 +5,62 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/splash.png",
-      "resizeMode": "cover",
+      "resizeMode": "contain",
       "backgroundColor": "#07070C"
     },
     "assetBundlePatterns": [
       "**/*"
     ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.knightrehber.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "fetch",
+          "processing",
+          "remote-notification"
+        ]
+      }
+    },
     "android": {
-      "package": "com.knightrehber.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#07070C"
       },
+      "package": "com.knightrehber.app",
+      "versionCode": 2,
       "permissions": [
-        "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED",
+        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "POST_NOTIFICATIONS",
+        "SCHEDULE_EXACT_ALARM",
+        "USE_EXACT_ALARM",
+        "FOREGROUND_SERVICE",
         "WAKE_LOCK"
       ]
     },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
     "plugins": [
-      "expo-notifications",
-      "expo-build-properties"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/adaptive-icon.png",
+          "color": "#FFD66B"
+        }
+      ]
     ],
     "extra": {
       "eas": {
-        "projectId": "333fb93b-cd8b-4c15-991d-574bf391907d"
+        "projectId": "00989cea-c84c-4189-964d-562e6b7e3c16"
       }
     },
-    "owner": "agadt"
+    "owner": "ceylan26"
   }
 }
