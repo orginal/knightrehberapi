@@ -122,21 +122,36 @@ connectToMongoDB().catch(console.error);
 async function sendExpoPushNotification(pushTokens, title, message, imageUrl = null) {
   if (!pushTokens || pushTokens.length === 0) {
     console.log('⚠️ Push token yok, bildirim gönderilemedi');
-    return { success: 0, failed: 0 };
+    return { success: 0, failed: 0, error: 'Push token bulunamadı' };
   }
 
-  try {
-    const messages = pushTokens.map(token => ({
-      to: token,
-      sound: 'default',
-      title: title,
-      body: message,
-      data: { title, message, imageUrl },
-      priority: 'high',
-      channelId: 'default',
-      ...(imageUrl && { _displayInForeground: true })
-    }));
+  // Token'ları temizle ve geçerli olanları filtrele
+  const validTokens = pushTokens
+    .map(t => String(t).trim())
+    .filter(t => t && t.startsWith('ExponentPushToken[') && t.length > 20);
 
+  if (validTokens.length === 0) {
+    console.log('⚠️ Geçerli push token yok');
+    return { success: 0, failed: 0, error: 'Geçerli push token bulunamadı' };
+  }
+
+  console.log(`📤 ${validTokens.length} cihaza bildirim gönderiliyor...`);
+
+  try {
+    const messages = validTokens.map(token => {
+      return {
+        to: token,
+        sound: 'default',
+        title: title,
+        body: message,
+        data: { title, message, ...(imageUrl && { imageUrl }) },
+        priority: 'high',
+        channelId: 'default',
+        badge: 1
+      };
+    });
+
+    console.log('📤 Expo Push API\'ye istek gönderiliyor...');
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
       headers: {
@@ -147,16 +162,29 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
       body: JSON.stringify(messages),
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Expo Push API hatası:', response.status, errorText);
+      return { success: 0, failed: validTokens.length, error: `API hatası: ${response.status}` };
+    }
+
     const result = await response.json();
-    console.log('📤 Expo Push Notification sonucu:', result);
+    console.log('📤 Expo Push Notification sonucu:', JSON.stringify(result, null, 2));
 
     const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
     const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
+    
+    // Hata detaylarını logla
+    if (failedCount > 0) {
+      const errors = result.data?.filter(r => r.status !== 'ok');
+      console.error('❌ Başarısız bildirimler:', errors);
+    }
 
-    return { success: successCount, failed: failedCount };
+    return { success: successCount, failed: failedCount, details: result.data };
   } catch (error) {
-    console.error('❌ Expo Push Notification hatası:', error);
-    return { success: 0, failed: pushTokens.length };
+    console.error('❌ Expo Push Notification hatası:', error.message);
+    console.error('❌ Hata stack:', error.stack);
+    return { success: 0, failed: validTokens.length, error: error.message };
   }
 }
 
@@ -368,9 +396,15 @@ app.post('/api/admin/send-notification', async (req, res) => {
 
     res.json({
       success: true,
-      message: `Bildirim gönderildi! ${pushResult.success} cihaza ulaştı.`,
+      message: tokensToSend.length > 0 
+        ? `Bildirim gönderildi! ${pushResult.success} cihaza ulaştı, ${pushResult.failed} başarısız.`
+        : 'Bildirim kaydedildi ancak kayıtlı push token yok. APK\'yı açın ve bildirim izni verin.',
       notification: bildirim,
-      pushStats: pushResult
+      pushStats: {
+        ...pushResult,
+        totalTokens: tokensToSend.length,
+        mongoError: mongoError || null
+      }
     });
   } catch (error) {
     console.error('Bildirim hatası:', error);
