@@ -408,6 +408,34 @@ app.get('/api/admin/banners', async (req, res) => {
   }
 });
 
+// Imgur album linkini direkt görsel linkine çevir
+function convertImgurUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  
+  const trimmedUrl = url.trim();
+  
+  // Imgur album linki: https://imgur.com/a/xxxxx -> https://i.imgur.com/xxxxx.jpg
+  const albumMatch = trimmedUrl.match(/imgur\.com\/a\/([a-zA-Z0-9]+)/);
+  if (albumMatch) {
+    const imageId = albumMatch[1];
+    return `https://i.imgur.com/${imageId}.jpg`;
+  }
+  
+  // Imgur direkt link: https://imgur.com/xxxxx -> https://i.imgur.com/xxxxx.jpg
+  const directMatch = trimmedUrl.match(/imgur\.com\/([a-zA-Z0-9]+)(\.[a-z]+)?$/);
+  if (directMatch && !trimmedUrl.includes('/a/')) {
+    const imageId = directMatch[1];
+    return `https://i.imgur.com/${imageId}.jpg`;
+  }
+  
+  // Zaten i.imgur.com formatındaysa olduğu gibi döndür
+  if (trimmedUrl.includes('i.imgur.com')) {
+    return trimmedUrl;
+  }
+  
+  return trimmedUrl;
+}
+
 app.post('/api/admin/banner', async (req, res) => {
   try {
     const { position, imageUrl, clickUrl, active = true } = req.body || {};
@@ -443,10 +471,13 @@ app.post('/api/admin/banner', async (req, res) => {
       }
     }
     
+    // Imgur URL'ini düzelt
+    const convertedImageUrl = imageUrl ? convertImgurUrl(imageUrl) : null;
+    
     const banner = {
       id: Date.now(),
       position: String(position).trim(),
-      imageUrl: imageUrl ? String(imageUrl).trim() : null,
+      imageUrl: convertedImageUrl,
       clickUrl: clickUrl ? String(clickUrl).trim() : null,
       active: active !== false,
       createdAt: new Date().toISOString(),
