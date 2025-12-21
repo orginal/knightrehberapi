@@ -47,35 +47,58 @@ let mongoClient = null;
 let db = null;
 
 // MongoDB bağlantısını başlat (Vercel serverless için optimize)
+// Vercel serverless'ta her istek yeni bir instance olduğu için connection pooling önemli
+let cachedClient = null;
+let cachedDb = null;
+
 async function connectToMongoDB() {
   if (!MONGODB_URI) {
-    console.log('⚠️ MONGODB_URI environment variable bulunamadı');
+    console.error('⚠️ MONGODB_URI environment variable bulunamadı. Vercel dashboard\'da Environment Variables bölümünden ekleyin.');
     return false;
   }
 
   try {
-    // Vercel serverless'ta her istekte yeni connection oluşturma riski var
-    // Ama mevcut connection varsa ve bağlıysa tekrar kullan
-    if (mongoClient && mongoClient.topology && mongoClient.topology.isConnected()) {
-      return true;
+    // Eğer cached client varsa ve bağlıysa onu kullan (aynı serverless instance içinde)
+    if (cachedClient && cachedDb) {
+      try {
+        // Ping ile bağlantının hala aktif olduğunu kontrol et
+        await cachedClient.db('admin').command({ ping: 1 });
+        return true;
+      } catch (pingError) {
+        // Ping başarısız olduysa bağlantıyı temizle ve yeniden oluştur
+        console.log('⚠️ Cached MongoDB bağlantısı kopmuş, yeniden bağlanılıyor...');
+        cachedClient = null;
+        cachedDb = null;
+      }
     }
     
     // Yeni connection oluştur
+    console.log('🔄 MongoDB bağlantısı oluşturuluyor...');
     mongoClient = new MongoClient(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000, // 5 saniye timeout
-      connectTimeoutMS: 5000
+      serverSelectionTimeoutMS: 10000, // 10 saniye timeout
+      connectTimeoutMS: 10000,
+      maxPoolSize: 10, // Connection pool size
+      minPoolSize: 1
     });
     
     await mongoClient.connect();
     // Connection string'den database adını çıkar veya varsayılan kullan
     const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
     db = mongoClient.db(dbName);
+    
+    // Cache'e kaydet
+    cachedClient = mongoClient;
+    cachedDb = db;
+    
     console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
     return true;
   } catch (error) {
     console.error('❌ MongoDB bağlantı hatası:', error.message);
+    console.error('❌ MONGODB_URI:', MONGODB_URI ? MONGODB_URI.substring(0, 20) + '...' : 'YOK');
     mongoClient = null;
     db = null;
+    cachedClient = null;
+    cachedDb = null;
     return false;
   }
 }
