@@ -361,6 +361,7 @@ app.post('/api/admin/send-notification', async (req, res) => {
 
     // Expo Push Notification gönder - MongoDB'den token'ları al
     let tokensToSend = [];
+    let mongoError = null;
     
     // MongoDB'ye bağlanmayı dene
     const isMongoConnected = await connectToMongoDB();
@@ -379,9 +380,11 @@ app.post('/api/admin/send-notification', async (req, res) => {
         console.log('📊 Fallback: Memory database\'den token sayısı:', tokensToSend.length);
       }
     } else {
+      // MongoDB bağlantısı yok
+      mongoError = 'MongoDB bağlantısı yok';
       // Fallback: Memory database
-      tokensToSend = userTokens;
-      console.log('📊 Memory database\'den token sayısı:', tokensToSend.length);
+      tokensToSend = userTokens.filter(t => t && t.trim());
+      console.log('📊 Fallback: Memory database\'den token sayısı:', tokensToSend.length);
     }
     
     console.log('📋 Gönderilecek token listesi:', tokensToSend);
