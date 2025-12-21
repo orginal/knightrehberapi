@@ -166,6 +166,31 @@
             </div>
         </div>
 
+        <!-- REKLAM BANNER YÖNETİMİ -->
+        <h2 style="color: #FFD66B; margin: 30px 0 20px 0;">🖼️ Reklam Banner Yönetimi</h2>
+        <p style="color: #8E97A8; margin-bottom: 20px; font-size: 14px;">
+            Her pozisyon için maksimum 5 banner ekleyebilirsiniz. Mobil uygulamada en son eklenen aktif banner gösterilir.
+        </p>
+        
+        <div id="bannerAlert" class="alert"></div>
+
+        <select id="bannerPosition" style="margin-bottom: 10px;">
+            <option value="">-- Banner Konumu Seçin --</option>
+            <option value="home">🏠 Anasayfa</option>
+            <option value="merchant">💰 Merchant Sekmesi (Pazar)</option>
+            <option value="goldbar">💎 Goldbar Sekmesi</option>
+            <option value="karakter">👤 Karakter Sekmesi (Basit Atak Hesapla)</option>
+            <option value="skill">⚔️ Skill Hesapla</option>
+            <option value="chardiz">📐 Char Diz</option>
+        </select>
+        
+        <input type="url" id="bannerImageUrl" placeholder="📷 Banner Görsel URL'si (zorunlu)">
+        <input type="url" id="bannerClickUrl" placeholder="🔗 Tıklama Linki (isteğe bağlı)">
+        <button onclick="bannerKaydet()">💾 Banner Kaydet</button>
+
+        <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Mevcut Banner'lar</h3>
+        <div id="bannerList"></div>
+
         <!-- BİLDİRİM GÖNDERME -->
         <h2 style="color: #FFD66B; margin: 30px 0 20px 0;">📢 Bildirim Gönder</h2>
         
@@ -245,6 +270,7 @@
             guncellemeleriYukle();
             istatistikleriYukle();
             bildirimleriYukle();
+            bannerlariYukle();
         }
 
         // İstatistikleri yükle
@@ -416,6 +442,122 @@
                 `).join('');
             } catch (err) {
                 console.error('Bildirim yükleme hatası:', err);
+            }
+        }
+
+        // Banner kaydet
+        async function bannerKaydet() {
+            const position = document.getElementById('bannerPosition').value;
+            const imageUrl = document.getElementById('bannerImageUrl').value.trim();
+            const clickUrl = document.getElementById('bannerClickUrl').value.trim();
+
+            if (!position) {
+                gosterAlert('bannerAlert', '⚠️ Lütfen banner konumu seçin!', 'error');
+                return;
+            }
+
+            if (!imageUrl) {
+                gosterAlert('bannerAlert', '⚠️ Banner görsel URL\'si gerekli!', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch(API_URL + '/admin/banner', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ position, imageUrl, clickUrl, active: true })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    gosterAlert('bannerAlert', '✅ Banner kaydedildi!', 'success');
+                    document.getElementById('bannerImageUrl').value = '';
+                    document.getElementById('bannerClickUrl').value = '';
+                    bannerlariYukle();
+                } else {
+                    gosterAlert('bannerAlert', '❌ ' + (data.error || 'Hata!'), 'error');
+                }
+            } catch (err) {
+                gosterAlert('bannerAlert', '❌ Hata: ' + err.message, 'error');
+            }
+        }
+
+        // Banner'ları yükle
+        async function bannerlariYukle() {
+            try {
+                const res = await fetch(API_URL + '/admin/banners');
+                const bannerlar = await res.json();
+                const list = document.getElementById('bannerList');
+
+                if (bannerlar.length === 0) {
+                    list.innerHTML = '<p style="color: #8E97A8; text-align: center; padding: 20px;">Henüz banner eklenmedi</p>';
+                    return;
+                }
+
+                const positionNames = {
+                    'home': '🏠 Anasayfa',
+                    'merchant': '💰 Merchant',
+                    'goldbar': '💎 Goldbar',
+                    'karakter': '👤 Karakter',
+                    'skill': '⚔️ Skill Hesapla',
+                    'chardiz': '📐 Char Diz'
+                };
+
+                // Position'a göre grupla
+                const groupedBanners = {};
+                bannerlar.forEach(b => {
+                    if (!groupedBanners[b.position]) {
+                        groupedBanners[b.position] = [];
+                    }
+                    groupedBanners[b.position].push(b);
+                });
+
+                list.innerHTML = Object.keys(groupedBanners).map(position => {
+                    const banners = groupedBanners[position];
+                    return `
+                        <div style="margin-bottom: 30px;">
+                            <h4 style="color: #FFD66B; margin-bottom: 15px;">${positionNames[position] || position} (${banners.length}/5)</h4>
+                            ${banners.map(b => `
+                                <div class="update-item" style="margin-bottom: 15px;">
+                                    <div class="update-title">Banner #${b.id}</div>
+                                    ${b.imageUrl ? `<img src="${escapeHtml(b.imageUrl)}" alt="Banner" style="max-width: 100%; margin: 10px 0; border-radius: 8px; max-height: 200px;" onerror="this.style.display='none'">` : ''}
+                                    ${b.clickUrl ? `<div class="update-content">🔗 Link: <a href="${escapeHtml(b.clickUrl)}" target="_blank" style="color: #FFD66B;">${escapeHtml(b.clickUrl)}</a></div>` : ''}
+                                    <div class="update-meta">
+                                        <span>Durum: ${b.active ? '✅ Aktif' : '❌ Pasif'}</span>
+                                        <span>${b.createdAt ? new Date(b.createdAt).toLocaleDateString('tr-TR') : ''}</span>
+                                        <button class="btn-danger" onclick="bannerSil(${b.id})">🗑️ Sil</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error('Banner yükleme hatası:', err);
+            }
+        }
+
+        // Banner sil
+        async function bannerSil(id) {
+            if (!confirm('Banner\'ı silmek istediğinize emin misiniz?')) return;
+
+            try {
+                const res = await fetch(API_URL + '/admin/banner/' + id, {
+                    method: 'DELETE'
+                });
+                if (!res.ok) throw new Error('Silme başarısız: ' + res.status);
+
+                const data = await res.json();
+
+                if (data.success) {
+                    gosterAlert('bannerAlert', '✅ Banner silindi!', 'success');
+                    bannerlariYukle();
+                } else {
+                    gosterAlert('bannerAlert', '❌ ' + (data.error || 'Hata!'), 'error');
+                }
+            } catch (err) {
+                gosterAlert('bannerAlert', '❌ Hata: ' + err.message, 'error');
             }
         }
 
