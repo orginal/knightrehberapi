@@ -25,6 +25,9 @@ let guncellemeler = [
 let bildirimler = [];
 let userTokens = []; // Fallback için (MongoDB bağlantısı yoksa)
 
+// Reklam Banner'ları - position: 'home', 'merchant', 'goldbar', 'karakter', 'skill', 'chardiz'
+let reklamBannerlar = [];
+
 const ADMIN_USER = 'aga';
 const ADMIN_PASS = 'aga251643';
 
@@ -390,6 +393,165 @@ app.delete('/api/admin/delete-update/:id', (req, res) => {
 
 app.get('/api/guncelleme-notlari', (req, res) => {
   res.json(guncellemeler.slice(0, 10));
+});
+
+// Reklam Banner API - En son eklenen aktif banner'ı döndür
+app.get('/api/reklam-banner/:position', async (req, res) => {
+  try {
+    const position = req.params.position;
+    
+    // MongoDB'den al - en son eklenen aktif banner
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        const banner = await bannersCollection
+          .findOne(
+            { position, active: true },
+            { sort: { createdAt: -1 } } // En son eklenen
+          );
+        if (banner) {
+          return res.json(banner);
+        }
+      } catch (error) {
+        console.error('MongoDB banner okuma hatası:', error);
+      }
+    }
+    
+    // Fallback: Memory database - en son eklenen
+    const banners = reklamBannerlar.filter(b => b.position === position && b.active);
+    const banner = banners.length > 0 ? banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] : null;
+    res.json(banner || null);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/banners', async (req, res) => {
+  try {
+    // MongoDB'den al - position ve createdAt'e göre sırala
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        const banners = await bannersCollection
+          .find({})
+          .sort({ position: 1, createdAt: -1 }) // Position'a göre, sonra en yeni
+          .toArray();
+        return res.json(banners);
+      } catch (error) {
+        console.error('MongoDB banner listesi hatası:', error);
+      }
+    }
+    
+    // Fallback
+    res.json(reklamBannerlar.sort((a, b) => {
+      if (a.position !== b.position) return a.position.localeCompare(b.position);
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    }));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Banner sil
+app.delete('/api/admin/banner/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    
+    // MongoDB'den sil
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        const result = await bannersCollection.deleteOne({ id });
+        if (result.deletedCount > 0) {
+          console.log('✅ Banner MongoDB\'den silindi:', id);
+          return res.json({ success: true, message: 'Banner silindi' });
+        }
+      } catch (error) {
+        console.error('MongoDB banner silme hatası:', error);
+      }
+    }
+    
+    // Fallback: Memory database
+    const index = reklamBannerlar.findIndex(b => b.id === id);
+    if (index !== -1) {
+      reklamBannerlar.splice(index, 1);
+      res.json({ success: true, message: 'Banner silindi' });
+    } else {
+      res.status(404).json({ success: false, error: 'Banner bulunamadı' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/admin/banner', async (req, res) => {
+  try {
+    const { position, imageUrl, clickUrl, active = true } = req.body || {};
+    
+    if (!position) {
+      return res.status(400).json({ success: false, error: 'Position gerekli' });
+    }
+    
+    // Aynı position için maksimum 5 banner kontrolü
+    const isMongoConnected = await connectToMongoDB();
+    let bannerCount = 0;
+    
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        bannerCount = await bannersCollection.countDocuments({ position: String(position).trim() });
+        
+        if (bannerCount >= 5) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Bu position için maksimum 5 banner eklenebilir. Önce bir banner silin.' 
+          });
+        }
+      } catch (error) {
+        console.error('MongoDB banner sayısı kontrolü hatası:', error);
+      }
+    } else {
+      // Fallback: Memory database
+      bannerCount = reklamBannerlar.filter(b => b.position === String(position).trim()).length;
+      if (bannerCount >= 5) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Bu position için maksimum 5 banner eklenebilir. Önce bir banner silin.' 
+        });
+      }
+    }
+    
+    const banner = {
+      id: Date.now(),
+      position: String(position).trim(),
+      imageUrl: imageUrl ? String(imageUrl).trim() : null,
+      clickUrl: clickUrl ? String(clickUrl).trim() : null,
+      active: active !== false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    // MongoDB'ye kaydet (yeni banner olarak ekle, update değil)
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        await bannersCollection.insertOne(banner);
+        console.log('✅ Banner MongoDB\'ye kaydedildi:', banner.position, 'Toplam:', bannerCount + 1);
+      } catch (error) {
+        console.error('MongoDB banner kayıt hatası:', error);
+      }
+    }
+    
+    // Memory database'ye ekle
+    reklamBannerlar.push(banner);
+    
+    res.json({ success: true, message: 'Banner kaydedildi', banner, totalBanners: bannerCount + 1 });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // ========== PAGES ==========

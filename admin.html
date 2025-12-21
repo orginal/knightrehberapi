@@ -487,8 +487,18 @@
         async function bannerlariYukle() {
             try {
                 const res = await fetch(API_URL + '/admin/banners');
+                if (!res.ok) {
+                    throw new Error('Banner listesi yüklenemedi: ' + res.status);
+                }
                 const bannerlar = await res.json();
                 const list = document.getElementById('bannerList');
+
+                // Array kontrolü
+                if (!Array.isArray(bannerlar)) {
+                    console.error('Banner listesi bir array değil:', bannerlar);
+                    list.innerHTML = '<p style="color: #EF4444; text-align: center; padding: 20px;">Banner listesi format hatası</p>';
+                    return;
+                }
 
                 if (bannerlar.length === 0) {
                     list.innerHTML = '<p style="color: #8E97A8; text-align: center; padding: 20px;">Henüz banner eklenmedi</p>';

@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 
@@ -8,6 +9,34 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..')));
+
+// MongoDB bağlantısı
+const MONGODB_URI = process.env.MONGODB_URI || '';
+let mongoClient = null;
+let db = null;
+
+async function connectToMongoDB() {
+  if (!MONGODB_URI) {
+    console.log('⚠️ MONGODB_URI environment variable bulunamadı, memory database kullanılacak');
+    return false;
+  }
+
+  try {
+    if (!mongoClient || !mongoClient.topology || !mongoClient.topology.isConnected()) {
+      mongoClient = new MongoClient(MONGODB_URI);
+      await mongoClient.connect();
+      const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
+      db = mongoClient.db(dbName);
+      console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
+    }
+    return true;
+  } catch (error) {
+    console.error('❌ MongoDB bağlantı hatası:', error.message);
+    mongoClient = null;
+    db = null;
+    return false;
+  }
+}
 
 // Basit veritabanı (Fallback)
 let database = {
@@ -42,7 +71,8 @@ let database = {
     app_status: 'active',
     maintenance_message: 'Uygulama bakım modundadır.',
     min_version: '1.0.0'
-  }
+  },
+  reklamBannerlar: []
 };
 
 // Mock Push Notification fonksiyonu
@@ -321,6 +351,154 @@ app.get('/api/admin/users', (req, res) => {
     total: database.users.length,
     withPushToken: database.users.filter(u => u.pushToken).length
   });
+});
+
+// REKLAM BANNER ENDPOINTS
+app.get('/api/reklam-banner/:position', async (req, res) => {
+  try {
+    const position = req.params.position;
+    
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        const banner = await bannersCollection
+          .findOne(
+            { position, active: true },
+            { sort: { createdAt: -1 } }
+          );
+        if (banner) {
+          return res.json(banner);
+        }
+      } catch (error) {
+        console.error('MongoDB banner okuma hatası:', error);
+      }
+    }
+    
+    const banners = database.reklamBannerlar.filter(b => b.position === position && b.active);
+    const banner = banners.length > 0 ? banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] : null;
+    res.json(banner || null);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/banners', async (req, res) => {
+  try {
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        const banners = await bannersCollection
+          .find({})
+          .sort({ position: 1, createdAt: -1 })
+          .toArray();
+        return res.json(banners);
+      } catch (error) {
+        console.error('MongoDB banner listesi hatası:', error);
+      }
+    }
+    
+    res.json(database.reklamBannerlar.sort((a, b) => {
+      if (a.position !== b.position) return a.position.localeCompare(b.position);
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    }));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/banner', async (req, res) => {
+  try {
+    const { position, imageUrl, clickUrl, active = true } = req.body || {};
+    
+    if (!position) {
+      return res.status(400).json({ success: false, error: 'Position gerekli' });
+    }
+    
+    const isMongoConnected = await connectToMongoDB();
+    let bannerCount = 0;
+    
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        bannerCount = await bannersCollection.countDocuments({ position: String(position).trim() });
+        
+        if (bannerCount >= 5) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Bu position için maksimum 5 banner eklenebilir. Önce bir banner silin.' 
+          });
+        }
+      } catch (error) {
+        console.error('MongoDB banner sayısı kontrolü hatası:', error);
+      }
+    } else {
+      bannerCount = database.reklamBannerlar.filter(b => b.position === String(position).trim()).length;
+      if (bannerCount >= 5) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Bu position için maksimum 5 banner eklenebilir. Önce bir banner silin.' 
+        });
+      }
+    }
+    
+    const banner = {
+      id: Date.now(),
+      position: String(position).trim(),
+      imageUrl: imageUrl ? String(imageUrl).trim() : null,
+      clickUrl: clickUrl ? String(clickUrl).trim() : null,
+      active: active !== false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        await bannersCollection.insertOne(banner);
+        console.log('✅ Banner MongoDB\'ye kaydedildi:', banner.position, 'Toplam:', bannerCount + 1);
+      } catch (error) {
+        console.error('MongoDB banner kayıt hatası:', error);
+      }
+    }
+    
+    database.reklamBannerlar.push(banner);
+    
+    res.json({ success: true, message: 'Banner kaydedildi', banner, totalBanners: bannerCount + 1 });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/admin/banner/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        const result = await bannersCollection.deleteOne({ id });
+        if (result.deletedCount > 0) {
+          console.log('✅ Banner MongoDB\'den silindi:', id);
+          return res.json({ success: true, message: 'Banner silindi' });
+        }
+      } catch (error) {
+        console.error('MongoDB banner silme hatası:', error);
+      }
+    }
+    
+    const index = database.reklamBannerlar.findIndex(b => b.id === id);
+    if (index !== -1) {
+      database.reklamBannerlar.splice(index, 1);
+      res.json({ success: true, message: 'Banner silindi' });
+    } else {
+      res.status(404).json({ success: false, error: 'Banner bulunamadı' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 module.exports = app;
