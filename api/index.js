@@ -28,7 +28,8 @@ let db = null;
 // MongoDB bağlantısını başlat (Vercel serverless için optimize)
 async function connectToMongoDB() {
   if (!MONGODB_URI) {
-    console.error('⚠️ MONGODB_URI environment variable bulunamadı. Vercel dashboard\'da Environment Variables bölümünden ekleyin.');
+    console.error('⚠️ MONGODB_URI environment variable bulunamadı');
+    console.error('⚠️ process.env.MONGODB_URI:', process.env.MONGODB_URI ? 'VAR' : 'YOK');
     return false;
   }
 
@@ -42,6 +43,11 @@ async function connectToMongoDB() {
       } catch (pingError) {
         // Ping başarısız olduysa bağlantıyı temizle ve yeniden oluştur
         console.log('⚠️ MongoDB bağlantısı kopmuş, yeniden bağlanılıyor...');
+        try {
+          await mongoClient.close();
+        } catch (closeError) {
+          // Ignore close errors
+        }
         mongoClient = null;
         db = null;
       }
@@ -49,11 +55,15 @@ async function connectToMongoDB() {
     
     // Yeni connection oluştur
     console.log('🔄 MongoDB bağlantısı oluşturuluyor...');
+    console.log('🔄 MONGODB_URI uzunluğu:', MONGODB_URI.length);
+    
     mongoClient = new MongoClient(MONGODB_URI, {
-      serverSelectionTimeoutMS: 10000, // 10 saniye timeout
-      connectTimeoutMS: 10000,
-      maxPoolSize: 10, // Connection pool size
-      minPoolSize: 1
+      serverSelectionTimeoutMS: 15000, // 15 saniye timeout (Vercel için daha uzun)
+      connectTimeoutMS: 15000,
+      socketTimeoutMS: 15000,
+      maxPoolSize: 1, // Serverless için 1 yeterli
+      minPoolSize: 0,
+      maxIdleTimeMS: 30000
     });
     
     await mongoClient.connect();
@@ -64,7 +74,17 @@ async function connectToMongoDB() {
     return true;
   } catch (error) {
     console.error('❌ MongoDB bağlantı hatası:', error.message);
-    console.error('❌ Hata detayı:', error);
+    console.error('❌ Hata stack:', error.stack);
+    console.error('❌ MONGODB_URI başlangıcı:', MONGODB_URI.substring(0, 30) + '...');
+    
+    // Bağlantıyı temizle
+    if (mongoClient) {
+      try {
+        await mongoClient.close();
+      } catch (closeError) {
+        // Ignore
+      }
+    }
     mongoClient = null;
     db = null;
     return false;
