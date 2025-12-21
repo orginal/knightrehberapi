@@ -355,6 +355,39 @@ app.get('/api/admin/users', (req, res) => {
   });
 });
 
+// Görsel Proxy - ImageBB ve diğer servisler için
+app.get('/api/image-proxy', (req, res) => {
+  const imageUrl = req.query.url;
+  
+  if (!imageUrl) {
+    return res.status(400).json({ error: 'URL parametresi gerekli' });
+  }
+
+  try {
+    const url = new URL(imageUrl);
+    const protocol = url.protocol === 'https:' ? https : http;
+    
+    protocol.get(imageUrl, (proxyRes) => {
+      // Header'ları kopyala
+      res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400'); // 1 gün cache
+      
+      // Status code'u kontrol et
+      if (proxyRes.statusCode !== 200) {
+        return res.status(proxyRes.statusCode).json({ error: 'Görsel yüklenemedi' });
+      }
+      
+      // Görseli stream et
+      proxyRes.pipe(res);
+    }).on('error', (error) => {
+      console.error('Image proxy hatası:', error);
+      res.status(500).json({ error: 'Görsel proxy hatası: ' + error.message });
+    });
+  } catch (error) {
+    res.status(400).json({ error: 'Geçersiz URL: ' + error.message });
+  }
+});
+
 // REKLAM BANNER ENDPOINTS - Tüm aktif banner'ları döndür
 app.get('/api/reklam-banner/:position', async (req, res) => {
   try {
@@ -369,7 +402,18 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
           .sort({ createdAt: -1 }) // En yeni önce
           .toArray();
         if (banners && banners.length > 0) {
-          return res.json({ banners });
+          // ImageBB URL'lerini proxy URL'ye çevir
+          const baseUrl = req.protocol + '://' + req.get('host');
+          const bannersWithProxy = banners.map(banner => {
+            if (banner.imageUrl && banner.imageUrl.includes('ibb.co')) {
+              return {
+                ...banner,
+                imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+              };
+            }
+            return banner;
+          });
+          return res.json({ banners: bannersWithProxy });
         }
       } catch (error) {
         console.error('MongoDB banner okuma hatası:', error);
@@ -378,7 +422,20 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
     
     const banners = database.reklamBannerlar.filter(b => b.position === position && b.active);
     const sortedBanners = banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    res.json({ banners: sortedBanners });
+    
+    // ImageBB URL'lerini proxy URL'ye çevir
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const bannersWithProxy = sortedBanners.map(banner => {
+      if (banner.imageUrl && banner.imageUrl.includes('ibb.co')) {
+        return {
+          ...banner,
+          imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+        };
+      }
+      return banner;
+    });
+    
+    res.json({ banners: bannersWithProxy });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
