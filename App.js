@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useContext, createContext } from 'react';
+
+import React, { useState, useEffect, useContext, createContext, useRef, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -14,119 +15,175 @@ import {
   TextInput,
   Platform,
   Dimensions,
-  Linking
+  Linking,
+  AppState
 } from 'react-native';
-import * as Notifications from 'expo-notifications';
-import { WebView } from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
+import { WebView } from 'react-native-webview';
+import AlarmScreen from './src/screens/AlarmScreen';
+import * as Notifications from 'expo-notifications';
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
-// API Yapılandırması
-const API_BASE_URL = 'https://knight-rehber-admin.vercel.app/api'; // Kendi backend URL'niz
-const APP_VERSION = '1.0.0';
-
-// API servisleri
-const ApiService = {
-  // Push bildirim ayarları
-  async registerForPushNotifications(userId, token) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/notifications/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId,
-          token,
-          appVersion: APP_VERSION,
-        }),
-      });
-      return await response.json();
-    } catch (error) {
-      console.log('Push notification kaydı hatası:', error);
-      return null;
-    }
-  },
-
-  // Güncelleme notlarını getir
-  async getGuncellemeNotlari() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/guncelleme-notlari`);
-      const data = await response.json();
-      return data;
-    } catch (error) {
-      console.log('Güncelleme notları yüklenirken hata:', error);
-      return null;
-    }
-  },
-
-  // Nostalji fotoğraflarını getir
-  async getNostaljiFotograflar() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/nostalji-fotograflar`);
-      const data = await response.json();
-      return data;
-    } catch (error) {
-      console.log('Nostalji fotoğrafları yüklenirken hata:', error);
-      return null;
-    }
-  },
-
-  // Uygulama istatistikleri gönder
-  async sendAppStats(userId, action) {
-    try {
-      await fetch(`${API_BASE_URL}/api/stats`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId,
-          action,
-          timestamp: new Date().toISOString(),
-          appVersion: APP_VERSION,
-          platform: Platform.OS,
-        }),
-      });
-    } catch (error) {
-      console.log('İstatistik gönderilirken hata:', error);
-    }
-  },
-
-  // Uygulama kontrolü (ban/update kontrolü)
-  async checkAppStatus() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/app-status`);
-      return await response.json();
-    } catch (error) {
-      console.log('App status kontrolü hatası:', error);
-      return { status: 'active', maintenance: false };
-    }
-  }
-};
-
-// Bildirim ayarları
+// Bildirim handler - bildirim geldiğinde bir sonraki gün için yeniden zamanla
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (notification) => {
+    const { data } = notification.request.content;
+    
+    // ✅ DÜZELTME: Handler her zaman bildirimi göstersin, sadece alarm bildirimlerini yeniden zamanla
+    // Handler hemen dönmeli, async işlemler arka planda yapılmalı
+    
+    // ✅ DEĞİŞİKLİK: Artık sadece 5 dakika öncesi bildirimi var (tam saatte bildirim yok)
+    // Eğer 5 dakika öncesi alarm bildirimi ise, bir sonraki gün için yeniden zamanla
+    // Async işlemleri arka planda yap, handler'ı hemen döndür
+    if (data && data.alarmId && data.time && data.type === 'alarm_5min_before') {
+      // Async işlemleri arka planda yapmak için setTimeout kullan (0ms - hemen arka planda)
+      setTimeout(async () => {
+        try {
+          const { EVENTS_DATA } = require('./src/data/events');
+          const { Platform } = require('react-native');
+          const alarm = EVENTS_DATA.find(a => a.id === data.alarmId);
+          
+          if (alarm) {
+            // Bir sonraki gün için hesapla - doğru zaman hesaplaması
+            const now = new Date();
+            const [hours, minutes] = data.time.split(':').map(Number);
+            
+            // Bugün için hedef zamanı oluştur
+            const targetDate = new Date(now);
+            targetDate.setHours(hours, minutes, 0, 0);
+            targetDate.setMilliseconds(0);
+            
+            // Eğer hedef zaman geçmişse, bir sonraki güne al
+            if (targetDate <= now) {
+              targetDate.setDate(targetDate.getDate() + 1);
+            }
+            
+            // Gün kontrolü - belirli günlerde çalışacaksa
+            if (alarm.days && alarm.days.length > 0) {
+              const DAYS_TR = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+              let targetDay = targetDate.getDay();
+              let targetDayName = DAYS_TR[targetDay];
+              
+              // Eğer hedef gün uygun değilse, bir sonraki uygun günü bul
+              if (!alarm.days.includes(targetDayName)) {
+                // Maksimum 7 gün ileriye bak (bir hafta)
+                for (let i = 1; i <= 7; i++) {
+                  targetDate.setDate(targetDate.getDate() + 1);
+                  targetDay = targetDate.getDay();
+                  targetDayName = DAYS_TR[targetDay];
+                  
+                  if (alarm.days.includes(targetDayName)) {
+                    // Uygun günü bulduk, saati ayarla
+                    targetDate.setHours(hours, minutes, 0, 0);
+                    targetDate.setMilliseconds(0);
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Son kontrol: Eğer hala geçmiş bir zamansa, bir gün daha ekle
+            if (targetDate <= now) {
+              targetDate.setDate(targetDate.getDate() + 1);
+              targetDate.setHours(hours, minutes, 0, 0);
+              targetDate.setMilliseconds(0);
+            }
+            
+            try {
+              // ✅ DEĞİŞİKLİK: 5 dakika öncesi bildirim olarak yeniden zamanla (tam saatte bildirim YOK)
+              // Bildirim metninde "5 dakika kaldı" yazacak ve 5 dakika öncesinde gönderilecek
+              const targetDate5Min = new Date(targetDate);
+              targetDate5Min.setMinutes(targetDate5Min.getMinutes() - 5); // 5 dakika öncesi
+              targetDate5Min.setMilliseconds(0);
+              
+              // Eğer 5 dakika öncesi geçmiş bir zamansa, bir sonraki gün için hesapla
+              if (targetDate5Min <= now) {
+                targetDate5Min.setDate(targetDate5Min.getDate() + 1);
+                targetDate5Min.setHours(hours, minutes, 0, 0);
+                targetDate5Min.setMinutes(targetDate5Min.getMinutes() - 5);
+                targetDate5Min.setMilliseconds(0);
+              }
+              
+              const notificationId5Min = `${data.alarmId}_${data.time}_5min_before`;
+              
+              // Önce aynı identifier'a sahip bildirimi iptal et (varsa)
+              try {
+                await Notifications.cancelScheduledNotificationAsync(notificationId5Min);
+              } catch (cancelError) {
+                // Bildirim yoksa hata vermez, devam et
+              }
+              
+              // ✅ BİLDİRİM GÜVENLİĞİ: MAX priority - düşük pil modunda da çalışır
+              if (Platform.OS === 'android') {
+                await Notifications.setNotificationChannelAsync('default', {
+                  name: 'Alarm Bildirimleri',
+                  importance: Notifications.AndroidImportance.MAX, // MAX priority
+                  vibrationPattern: [0, 250, 250, 250],
+                  lightColor: '#FFD66B',
+                  sound: true,
+                  enableLights: true,
+                  enableVibrate: true,
+                  showBadge: true,
+                });
+              }
+              
+              // ✅ BİLDİRİM GÜVENLİĞİ: 5 dakika öncesi bildirimi MAX priority ile yeniden zamanla
+              // NOT: Yerel bildirimler internet gerektirmez. Android'in Battery Optimization ayarları
+              // bildirimleri geciktirebilir, bu yüzden MAX priority kullanıyoruz.
+              await Notifications.scheduleNotificationAsync({
+                identifier: notificationId5Min,
+                content: {
+                  title: `⏰ ${data.eventName || alarm.name}`,
+                  body: `🕐 ${data.eventName || alarm.name} başlamasına 5 dakika kaldı`,
+                  sound: true,
+                  priority: Notifications.AndroidNotificationPriority.MAX, // MAX priority - internet olmadan da çalışır
+                  data: { 
+                    alarmId: data.alarmId, 
+                    time: data.time,
+                    eventName: data.eventName || alarm.name,
+                    description: `${data.eventName || alarm.name} başlamasına 5 dakika kaldı`,
+                    type: 'alarm_5min_before'
+                  },
+                  ...(Platform.OS === 'android' && { 
+                    channelId: 'default',
+                    sticky: true, // Kullanıcı kapatana kadar kalır - internet gerektirmez
+                  }),
+                },
+                trigger: {
+                  type: Notifications.SchedulableTriggerInputTypes.DATE,
+                  date: targetDate5Min, // 5 dakika öncesinde gönderilecek
+                  // Yerel bildirimler internet bağlantısı gerektirmez
+                },
+              });
+              
+              console.log(`🔄 5 dakika öncesi bildirim yeniden zamanlandı: ${data.alarmId} - ${data.time} (${targetDate5Min.toISOString()})`);
+            } catch (error) {
+              console.error('❌ Bildirim yeniden zamanlama hatası:', error);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Bildirim handler hatası:', error);
+        }
+      });
+    }
+    
+    // Handler'ı hemen döndür - bildirim hemen gösterilsin
+    return {
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    };
+  },
 });
 
-// Bildirim kanalı oluştur (Android için)
-const setupNotificationChannel = async () => {
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('alarm-channel', {
-      name: 'Alarm Bildirimleri',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#FF231F7C',
-      sound: 'default',
-    });
-  }
+// Saati parçalara ayırma
+const parseTime = (timeStr) => {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return { hours, minutes };
 };
+
+
+
 
 // Auth Context
 const AuthContext = createContext();
@@ -145,7 +202,129 @@ const AuthProvider = ({ children }) => {
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [appStatus, setAppStatus] = useState({ status: 'active', maintenance: false });
+  const [appState, setAppState] = useState(AppState.currentState);
+  
+
+  // Etkinlik listesi
+  const etkinlikler = [
+    {
+      id: 'bdw',
+      name: 'BDW - Border Defense War',
+      times: ['13:00', '19:00', '02:00'],
+      description: 'Sınır Savunma Savaşı'
+    },
+    {
+      id: 'chaos',
+      name: 'Chaos',
+      times: ['00:00', '12:00'],
+      description: 'Kaos Savaşı'
+    },
+    {
+      id: 'juraid',
+      name: 'Juraid Mountain (JR)',
+      times: ['07:40', '22:40'],
+      description: 'Juraid Dağı Etkinliği'
+    },
+    {
+      id: 'bifrost',
+      name: 'Bifrost',
+      times: ['14:00', '21:00', '02:00'],
+      description: 'Bifrost Savaşı'
+    },
+    {
+      id: 'krowaz',
+      name: 'Krowaz',
+      times: ['10:00', '21:00'],
+      description: 'Krowaz Etkinliği'
+    },
+    {
+      id: 'lunar',
+      name: 'Lunar War',
+      times: ['14:00', '20:00'],
+      description: 'Ay Savaşı (Pazartesi & Cumartesi)',
+      days: ['Pazartesi', 'Cumartesi']
+    },
+    {
+      id: 'csw',
+      name: 'Castle Siege War (CSW)',
+      times: ['20:30'],
+      description: 'Kale Kuşatma Savaşı (Pazar)',
+      days: ['Pazar']
+    },
+    {
+      id: 'utc',
+      name: 'Under the Castle (UTC)',
+      times: ['21:00'],
+      description: 'Kale Altı Savaşı (Sadece Cuma)',
+      days: ['Cuma']
+    },
+    {
+      id: 'ultima',
+      name: 'Ultima',
+      times: ['10:00', '21:30'],
+      description: 'Ultima Etkinliği'
+    },
+    {
+      id: 'steam_bdw',
+      name: 'SteamKO BDW',
+      times: ['01:00', '07:00', '12:00', '16:00', '20:00'],
+      description: 'SteamKO Border Defense War'
+    },
+    {
+      id: 'steam_chaos',
+      name: 'SteamKO Chaos',
+      times: ['10:00', '14:00', '22:00'],
+      description: 'SteamKO Chaos Savaşı'
+    },
+    {
+      id: 'steam_jr',
+      name: 'SteamKO JR',
+      times: ['02:40', '13:40'],
+      description: 'SteamKO Juraid Mountain'
+    },
+    {
+      id: 'steam_ft',
+      name: 'SteamKO Forgotten Temple (FT)',
+      times: ['08:00', '23:00'],
+      description: 'SteamKO Unutulmuş Tapınak'
+    },
+    {
+      id: 'felankor_esland',
+      name: 'Felankor - Esland Boss',
+      times: ['09:00', '17:00', '23:30'],
+      description: 'Felankor ve Esland Boss Spawn'
+    },
+    {
+      id: 'draki_kulesi',
+      name: 'Draki Kulesi',
+      times: ['01:00', '04:00'],
+      description: 'Draki giriş hakkı ve görev sıfırlama'
+    },
+    {
+      id: 'knight_royale',
+      name: 'Knight Royale',
+      times: ['16:00', '21:30'],
+      description: 'Knight Royale Etkinliği'
+    },
+    {
+      id: 'full_moon_rift',
+      name: 'Full Moon Rift',
+      times: ['04:00'],
+      description: 'Full Moon Rift giriş hakkı sıfırlama'
+    },
+    {
+      id: 'twisted_moradon',
+      name: 'Twisted Moradon (Zombi)',
+      times: ['16:00', '21:30'],
+      description: 'Twisted Moradon Zombi Etkinliği'
+    },
+    {
+      id: 'manesin_arenasi',
+      name: 'Manesin Arenası',
+      times: ['16:00', '21:30'],
+      description: 'Manesin Arenası Etkinliği'
+    },
+  ];
 
   // AsyncStorage fonksiyonları
   const saveUserToStorage = async (userData) => {
@@ -186,24 +365,6 @@ const AuthProvider = ({ children }) => {
     return false;
   };
 
-  const saveAlarmsToStorage = async (userId, alarms) => {
-    try {
-      await AsyncStorage.setItem(`alarms_${userId}`, JSON.stringify(alarms));
-    } catch (error) {
-      console.log('Alarmlar kaydedilemedi:', error);
-    }
-  };
-
-  const loadAlarmsFromStorage = async (userId) => {
-    try {
-      const alarms = await AsyncStorage.getItem(`alarms_${userId}`);
-      return alarms ? JSON.parse(alarms) : {};
-    } catch (error) {
-      console.log('Alarmlar yüklenemedi:', error);
-    }
-    return {};
-  };
-
   const saveUsersToStorage = async (usersData) => {
     try {
       await AsyncStorage.setItem('users', JSON.stringify(usersData));
@@ -222,38 +383,29 @@ const AuthProvider = ({ children }) => {
     return [];
   };
 
-  const saveAlarmTypeToStorage = async (alarmType) => {
+
+  // İlk kurulum kontrolü - telefon saatiyle eşleşme
+  const checkFirstTimeSetup = async () => {
     try {
-      await AsyncStorage.setItem('alarmType', alarmType);
+      const firstTimeSetup = await AsyncStorage.getItem('firstTimeSetup');
+      if (!firstTimeSetup) {
+        // İlk kurulum - telefon saatiyle eşleşme kontrolü
+        const now = new Date();
+        await AsyncStorage.setItem('firstTimeSetup', JSON.stringify({
+          completed: true,
+          setupTime: now.toISOString(),
+          deviceTime: now.getTime()
+        }));
+        return true; // İlk kurulum
+      }
+      return false; // Daha önce kurulum yapılmış
     } catch (error) {
-      console.log('Alarm tipi kaydedilemedi:', error);
+      console.log('İlk kurulum kontrolü hatası:', error);
+      return false;
     }
   };
 
-  const loadAlarmTypeFromStorage = async () => {
-    try {
-      const alarmType = await AsyncStorage.getItem('alarmType');
-      return alarmType || 'notification';
-    } catch (error) {
-      console.log('Alarm tipi yüklenemedi:', error);
-    }
-    return 'notification';
-  };
 
-  // Push bildirim token'ını kaydet
-  const registerPushToken = async (token) => {
-    if (user) {
-      await ApiService.registerForPushNotifications(user.id, token);
-      await ApiService.sendAppStats(user.id, 'app_open');
-    }
-  };
-
-  // Uygulama durumunu kontrol et
-  const checkAppStatus = async () => {
-    const status = await ApiService.checkAppStatus();
-    setAppStatus(status);
-    return status;
-  };
 
   // Uygulama başlangıcında kayıtlı kullanıcıyı yükle
   useEffect(() => {
@@ -271,11 +423,10 @@ const AuthProvider = ({ children }) => {
         const guestUser = {
           id: 'guest_' + Date.now(),
           email: 'guest@knightrehber.com',
-          username: 'Misafir',
+          username: 'Kullanıcı',
           phone: '',
           createdAt: new Date(),
           favorites: [],
-          alarms: {},
           premium: false,
         };
         
@@ -285,11 +436,130 @@ const AuthProvider = ({ children }) => {
         setDisclaimerAccepted(savedDisclaimer);
         setShowDisclaimer(!savedDisclaimer);
 
-        // Uygulama durumunu kontrol et
-        await checkAppStatus();
+        // İlk kurulum kontrolü - telefon saatiyle eşleşme
+        const isFirstTime = await checkFirstTimeSetup();
+        if (isFirstTime) {
+          console.log('✅ İlk kurulum tamamlandı - telefon saatiyle eşleşme kontrolü yapıldı');
+        }
+
+        // Alarm sistemi başlatma
+        if (Platform.OS !== 'web') {
+          try {
+            // İlk kurulum kontrolü - SADECE İLK KURULUMDA telefon saatiyle eşleştir
+            const isFirstLaunch = await AsyncStorage.getItem('isFirstLaunch');
+            
+            if (isFirstLaunch === null) {
+              // SADECE İLK KURULUMDA: Telefonun saat ve gün bilgisini kaydet
+              const now = new Date();
+              const phoneHour = now.getHours();
+              const phoneMinute = now.getMinutes();
+              const phoneDay = now.getDay(); // 0=Pazar, 1=Pazartesi, ...
+              
+              const deviceTimeInfo = {
+                timestamp: now.getTime(),
+                localHours: phoneHour,
+                localMinutes: phoneMinute,
+                localDay: phoneDay,
+                timezoneOffset: now.getTimezoneOffset(),
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                dateString: now.toLocaleString('tr-TR', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+                dayName: ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'][phoneDay]
+              };
+              await AsyncStorage.setItem('deviceTimeInfo', JSON.stringify(deviceTimeInfo));
+              await AsyncStorage.setItem('isFirstLaunch', 'false');
+              
+              console.log('📱 İLK KURULUM - Telefon saati ve günü kaydedildi:');
+              console.log(`   📅 Gün: ${deviceTimeInfo.dayName} (${phoneDay})`);
+              console.log(`   🕐 Saat: ${phoneHour}:${phoneMinute.toString().padStart(2, '0')}`);
+              console.log(`   🌍 Timezone: ${deviceTimeInfo.timezone}`);
+              console.log('✅ İlk kurulum tamamlandı - telefon saati ve günüyle eşleştirildi');
+            } else {
+              console.log('📱 Uygulama açıldı (ilk kurulum değil, eşleştirme yapılmadı)');
+            }
+
+          } catch (error) {
+            console.error('Alarm setup error:', error);
+          }
+
+          // Push Notification token kayıt
+          try {
+            console.log('📱 Push notification setup başlatılıyor...');
+            
+            // Android için bildirim kanalı oluştur (APK için gerekli)
+            if (Platform.OS === 'android') {
+              try {
+                await Notifications.setNotificationChannelAsync('default', {
+                  name: 'Varsayılan',
+                  importance: Notifications.AndroidImportance.MAX,
+                  vibrationPattern: [0, 250, 250, 250],
+                  lightColor: '#FFD66B',
+                  sound: 'default',
+                });
+                console.log('✅ Android bildirim kanalı oluşturuldu');
+              } catch (channelError) {
+                console.error('❌ Bildirim kanalı oluşturma hatası:', channelError);
+              }
+            }
+            
+            const { status: existingStatus } = await Notifications.getPermissionsAsync();
+            console.log('📱 Mevcut bildirim izni durumu:', existingStatus);
+            
+            let finalStatus = existingStatus;
+            if (existingStatus !== 'granted') {
+              console.log('📱 Bildirim izni isteniyor...');
+              const { status } = await Notifications.requestPermissionsAsync();
+              finalStatus = status;
+              console.log('📱 Bildirim izni sonucu:', status);
+            }
+            
+            if (finalStatus === 'granted') {
+              console.log('✅ Bildirim izni verildi, token alınıyor...');
+              
+              try {
+                const tokenData = await Notifications.getExpoPushTokenAsync({
+                  projectId: '00989cea-c84c-4189-964d-562e6b7e3c16'
+                });
+                const pushToken = tokenData.data;
+                console.log('✅ Expo Push Token alındı:', pushToken);
+                console.log('📱 Token uzunluğu:', pushToken.length);
+                console.log('📱 Token formatı:', pushToken.startsWith('ExponentPushToken[') ? 'Doğru' : 'Hatalı');
+
+                // Token'ı backend'e gönder
+                try {
+                  console.log('📤 Token backend\'e gönderiliyor...');
+                  const response = await fetch('https://knightrehberapi.vercel.app/api/push/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: pushToken })
+                  });
+                  
+                  const result = await response.json();
+                  console.log('📤 Backend yanıtı:', result);
+                  
+                  if (result.success) {
+                    console.log('✅ Push token backend\'e kaydedildi. Toplam token:', result.totalTokens || 'bilinmiyor');
+                  } else {
+                    console.error('❌ Push token kayıt hatası:', result.error);
+                  }
+                } catch (error) {
+                  console.error('❌ Push token gönderme hatası:', error);
+                  console.error('❌ Hata detayı:', error.message);
+                }
+              } catch (tokenError) {
+                console.error('❌ Expo Push Token alma hatası:', tokenError);
+                console.error('❌ Hata detayı:', tokenError.message);
+              }
+            } else {
+              console.log('⚠️ Bildirim izni verilmedi, token alınamadı');
+            }
+          } catch (error) {
+            console.error('❌ Push notification setup error:', error);
+            console.error('❌ Hata stack:', error.stack);
+          }
+        }
 
       } catch (error) {
-        console.log('Uygulama başlatılırken hata:', error);
+        console.log('❌ Uygulama başlatılırken hata:', error);
       } finally {
         setIsLoading(false);
       }
@@ -312,6 +582,8 @@ const AuthProvider = ({ children }) => {
     await saveDisclaimerStatus(true);
   };
 
+
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -321,14 +593,8 @@ const AuthProvider = ({ children }) => {
       setShowDisclaimer,
       disclaimerAccepted,
       acceptDisclaimer,
-      saveAlarmsToStorage,
-      loadAlarmsFromStorage,
-      saveAlarmTypeToStorage,
-      loadAlarmTypeFromStorage,
       isLoading,
-      appStatus,
-      checkAppStatus,
-      registerPushToken
+      etkinlikler,
     }}>
       {children}
     </AuthContext.Provider>
@@ -348,17 +614,130 @@ const SplashScreen = () => (
 );
 
 // Header Component
-const Header = ({ onOpenSettings }) => {
-  const { user } = useAuth();
-
+const Header = ({ onOpenSettings, showBackButton, onBackPress, title }) => {
   return (
     <View style={styles.header}>
-      <Text style={styles.title}>KNIGHT REHBER</Text>
+      {showBackButton ? (
+        <TouchableOpacity style={styles.backButton} onPress={onBackPress}>
+          <Text style={styles.backButtonText}>⬅ Geri</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.headerPlaceholder} />
+      )}
+      
+      {title && <Text style={styles.title}>{title}</Text>}
+      
       <TouchableOpacity style={styles.settingsWrap} onPress={onOpenSettings}>
         <View style={styles.settingsCircle}>
           <Text style={styles.settingsEmoji}>⚙️</Text>
         </View>
       </TouchableOpacity>
+    </View>
+  );
+};
+
+// Reklam Banner Bileşeni - Tüm banner'ları alt alta gösterir
+const ReklamBanner = ({ position = 'home' }) => {
+  const [banners, setBanners] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [imageErrors, setImageErrors] = useState({});
+
+  useEffect(() => {
+    fetchBanners();
+    setImageErrors({}); // Position değiştiğinde error durumunu sıfırla
+  }, [position]);
+
+  const fetchBanners = async () => {
+    try {
+      setLoading(true);
+      setImageErrors({});
+      const response = await fetch(`${API_BASE_URL}/reklam-banner/${position}`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Banner data:', position, data);
+        // API {banners: [...]} formatında döndürüyor
+        if (data && data.banners && Array.isArray(data.banners) && data.banners.length > 0) {
+          // imageUrl'i olan banner'ları filtrele
+          const validBanners = data.banners.filter(b => b.imageUrl && b.imageUrl.trim() !== '');
+          setBanners(validBanners);
+        } else {
+          setBanners([]);
+        }
+      } else {
+        console.log('Banner response not ok:', response.status);
+        setBanners([]);
+      }
+    } catch (error) {
+      console.error('Banner yükleme hatası:', error);
+      setBanners([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBannerClick = (clickUrl) => {
+    if (clickUrl) {
+      Linking.openURL(clickUrl).catch(err => 
+        Alert.alert('Hata', 'Link açılamadı.')
+      );
+    }
+  };
+
+  const handleImageError = (error, bannerId, imageUrl) => {
+    console.error('Banner görsel yüklenemedi:', {
+      bannerId,
+      imageUrl,
+      error: error?.nativeEvent?.error || error,
+      userAgent: 'Expo Go'
+    });
+    setImageErrors(prev => ({ ...prev, [bannerId]: true }));
+  };
+
+  if (loading) {
+    return null; // Yüklenirken hiçbir şey gösterme
+  }
+
+  // Banner yoksa placeholder göster
+  if (banners.length === 0) {
+    return (
+      <View style={styles.reklamPlaceholder}>
+        <Text style={styles.reklamPlaceholderIcon}>📢</Text>
+        <Text style={styles.reklamPlaceholderText}>Bu alan reklam için ayrılmıştır</Text>
+        <Text style={styles.reklamPlaceholderSubtext}>Reklam vermek için bize ulaşın</Text>
+      </View>
+    );
+  }
+
+  // Tüm banner'ları alt alta göster - View wrapper ile scroll sorununu çöz
+  return (
+    <View style={styles.reklamBannerWrapper}>
+      {banners.map((banner) => {
+        // Bu banner'ın görseli hata verdi mi kontrol et
+        if (imageErrors[banner.id]) {
+          return null; // Hata veren banner'ı gösterme
+        }
+
+        return (
+          <TouchableOpacity 
+            key={banner.id}
+            style={styles.reklamBannerContainer} 
+            onPress={() => handleBannerClick(banner.clickUrl)}
+            activeOpacity={0.8}
+          >
+            <Image
+              source={{
+                uri: banner.imageUrl,
+                cache: 'reload'
+              }}
+              style={styles.reklamBannerImage}
+              resizeMode="contain"
+              onError={(error) => handleImageError(error, banner.id, banner.imageUrl)}
+              onLoadStart={() => console.log('Banner yükleniyor:', banner.imageUrl)}
+              onLoadEnd={() => console.log('Banner yüklendi:', banner.imageUrl)}
+            />
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 };
@@ -405,184 +784,51 @@ const CekilisKutusu = () => {
   );
 };
 
-// GÜNCELLENMİŞ Dinamik Güncelleme Notları Bileşeni
-const GuncellemeNotlariKutusu = () => {
-  const [guncellemeler, setGuncellemeler] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdate, setLastUpdate] = useState(null);
-
-  const loadGuncellemeler = async () => {
-    try {
-      setLoading(true);
-      
-      // Önce backend'den güncellemeleri çek
-      const backendGuncellemeler = await ApiService.getGuncellemeNotlari();
-      
-      if (backendGuncellemeler && backendGuncellemeler.length > 0) {
-        // Backend'den gelen verileri kullan
-        setGuncellemeler(backendGuncellemeler);
-        await AsyncStorage.setItem('guncellemeNotlari', JSON.stringify(backendGuncellemeler));
-        await AsyncStorage.setItem('guncellemeLastUpdate', new Date().toISOString());
-      } else {
-        // Backend'den veri gelmezse local storage'dan yükle
-        const savedGuncellemeler = await AsyncStorage.getItem('guncellemeNotlari');
-        const savedLastUpdate = await AsyncStorage.getItem('guncellemeLastUpdate');
-        
-        if (savedGuncellemeler) {
-          setGuncellemeler(JSON.parse(savedGuncellemeler));
-        } else {
-          // Varsayılan güncellemeler
-          const defaultGuncellemeler = [
-            {
-              id: 1,
-              tarih: '19.11.2024',
-              baslik: 'Hoş Geldiniz!',
-              icerik: 'Knight Rehber uygulamasına hoş geldiniz. Yeni özellikler yakında eklenecek.',
-              onem: 'normal'
-            }
-          ];
-          setGuncellemeler(defaultGuncellemeler);
-          await AsyncStorage.setItem('guncellemeNotlari', JSON.stringify(defaultGuncellemeler));
-        }
-        
-        setLastUpdate(savedLastUpdate);
-      }
-    } catch (error) {
-      console.log('Güncelleme notları yüklenirken hata:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadGuncellemeler();
-    
-    // Her 6 saatte bir güncellemeleri kontrol et
-    const interval = setInterval(loadGuncellemeler, 6 * 60 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleRefresh = () => {
-    loadGuncellemeler();
-    Alert.alert('Başarılı', 'Güncellemeler kontrol edildi!');
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.guncellemeCard}>
-        <Text style={styles.guncellemeTitle}>🔄 Güncelleme Notları</Text>
-        <Text style={styles.muted}>Yükleniyor...</Text>
-      </View>
-    );
-  }
-
+// WebView Screen Component
+const WebViewScreen = ({ url, onBack, title }) => {
   return (
-    <View style={styles.guncellemeCard}>
-      <View style={styles.guncellemeHeader}>
-        <Text style={styles.guncellemeTitle}>🔄 Güncelleme Notları</Text>
-        <TouchableOpacity onPress={handleRefresh}>
-          <Text style={styles.refreshButton}>🔄</Text>
-        </TouchableOpacity>
-      </View>
-      
-      {guncellemeler.slice(0, 3).map((guncelleme) => (
-        <TouchableOpacity 
-          key={guncelleme.id}
-          style={styles.guncellemeItem}
-          onPress={() => {
-            Alert.alert(
-              `Güncelleme - ${guncelleme.tarih}`,
-              guncelleme.icerik,
-              [{ text: 'Tamam' }]
-            );
-          }}
-        >
-          <View style={styles.guncellemeHeader}>
-            <Text style={styles.guncellemeTarih}>{guncelleme.tarih}</Text>
-            <Text style={[
-              styles.guncellemeOnem,
-              guncelleme.onem === 'yuksek' && styles.guncellemeOnemYuksek
-            ]}>
-              {guncelleme.onem === 'yuksek' ? '❗' : '📝'}
-            </Text>
-          </View>
-          <Text style={styles.guncellemeBaslik}>{guncelleme.baslik}</Text>
-          <Text style={styles.guncellemeOzet} numberOfLines={2}>
-            {guncelleme.icerik}
-          </Text>
-        </TouchableOpacity>
-      ))}
-      
-      {guncellemeler.length === 0 && (
-        <Text style={styles.muted}>Henüz güncelleme bulunmuyor.</Text>
-      )}
-      
-      {lastUpdate && (
-        <Text style={styles.lastUpdateText}>
-          Son güncelleme: {new Date(lastUpdate).toLocaleDateString('tr-TR')}
-        </Text>
-      )}
+    <View style={styles.screen}>
+      <Header 
+        showBackButton={true} 
+        onBackPress={onBack}
+        title={title}
+        onOpenSettings={() => {}}
+      />
+      <WebView
+        source={{ uri: url }}
+        style={styles.webview}
+        startInLoadingState={true}
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+      />
     </View>
   );
 };
 
 // Settings Modal
 const SettingsModal = ({ visible, onClose }) => {
-  const { user, saveAlarmTypeToStorage } = useAuth();
+  const { user } = useAuth();
   const [text, setText] = useState("");
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [alarmType, setAlarmType] = useState('notification');
-
-  // Alarm tipini yükle
-  useEffect(() => {
-    const loadAlarmType = async () => {
-      try {
-        const savedAlarmType = await AsyncStorage.getItem('alarmType');
-        if (savedAlarmType) {
-          setAlarmType(savedAlarmType);
-        }
-      } catch (error) {
-        console.log('Alarm tipi yüklenirken hata:', error);
-      }
-    };
-    loadAlarmType();
-  }, []);
+  const [activeTab, setActiveTab] = useState('ayarlar');
 
   const sendFeedback = () => {
     if (!text.trim()) return Alert.alert("Boş", "Mesaj yazmalısınız.");
     
-    // Geri bildirimi API'ye gönder
-    ApiService.sendAppStats(user?.id, 'feedback_sent');
+    Linking.openURL(`mailto:advertknightrehber@gmail.com?subject=Knight Rehber Geri Bildirim&body=${encodeURIComponent(text)}`).catch(err => 
+      Alert.alert('Hata', 'E-posta uygulaması açılamadı.')
+    );
     
     Alert.alert("Teşekkürler", "Öneriniz gönderildi!");
     setText("");
     onClose();
   };
 
-  const toggleNotifications = () => {
-    setNotificationsEnabled(!notificationsEnabled);
-    Alert.alert(
-      'Bildirim Ayarları',
-      `Bildirimler ${!notificationsEnabled ? 'açıldı' : 'kapatıldı'}`,
-      [{ text: 'Tamam' }]
-    );
-  };
-
-  const handleAlarmTypeChange = async (type) => {
-    setAlarmType(type);
-    await saveAlarmTypeToStorage(type);
-    Alert.alert(
-      'Alarm Tipi',
-      `Alarm tipi ${type === 'notification' ? 'bildirim' : 'telefon alarmı'} olarak ayarlandı`,
-      [{ text: 'Tamam' }]
-    );
-  };
-
   const openEmail = (subject = '', body = '') => {
-    const email = 'info@knightrehber.com';
+    const email = 'advertknightrehber@gmail.com';
     const mailto = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     Linking.openURL(mailto).catch(err => Alert.alert('Hata', 'E-posta uygulaması açılamadı.'));
   };
+
 
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -593,120 +839,113 @@ const SettingsModal = ({ visible, onClose }) => {
             <Text style={styles.backButtonText}>⬅ Geri</Text>
           </TouchableOpacity>
 
-          <View style={{ alignItems: "center", marginTop: 10 }}>
-            <View style={styles.avatarImage}>
-              <Text style={styles.avatarEmoji}>👤</Text>
-            </View>
-            <Text style={styles.profileName}>{user?.username || 'Kullanıcı'}</Text>
-            <Text style={styles.profileEmail}>{user?.email || 'email@example.com'}</Text>
+          {/* Sekme Butonları */}
+          <View style={styles.settingsTabs}>
+            <TouchableOpacity 
+              style={[styles.settingsTab, activeTab === 'ayarlar' && styles.settingsTabActive]}
+              onPress={() => setActiveTab('ayarlar')}
+            >
+              <Text style={[styles.settingsTabText, activeTab === 'ayarlar' && styles.settingsTabTextActive]}>
+                ⚙️ Ayarlar
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.settingsTab, activeTab === 'geri-bildirim' && styles.settingsTabActive]}
+              onPress={() => setActiveTab('geri-bildirim')}
+            >
+              <Text style={[styles.settingsTabText, activeTab === 'geri-bildirim' && styles.settingsTabTextActive]}>
+                💡 Geri Bildirim
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-            {user?.premium && (
-              <View style={styles.premiumBadge}>
-                <Text style={styles.premiumBadgeText}>⭐ PREMIUM</Text>
+          {activeTab === 'ayarlar' && (
+            <>
+              <View style={{ alignItems: "center", marginTop: 10 }}>
+                <View style={styles.avatarImage}>
+                  <Text style={styles.avatarEmoji}>👤</Text>
+                </View>
+                <Text style={styles.profileName}>Knight Rehber</Text>
+                <Text style={styles.profileEmail}>Bize destek olmak için bizi tavsiye edin!</Text>
+
+                {user?.premium && (
+                  <View style={styles.premiumBadge}>
+                    <Text style={styles.premiumBadgeText}>⭐ PREMIUM</Text>
+                  </View>
+                )}
               </View>
-            )}
-          </View>
 
-          <Text style={[styles.small, { marginTop: 18 }]}>AYARLAR</Text>
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Bildirimler</Text>
-              <Text style={styles.settingDescription}>
-                Etkinlik alarmları ve güncellemeler için bildirim al
-              </Text>
-            </View>
-            <Switch
-              value={notificationsEnabled}
-              onValueChange={toggleNotifications}
-              trackColor={{ false: '#475467', true: '#FFD66B' }}
-              thumbColor={notificationsEnabled ? '#0B0B0B' : '#f4f3f4'}
-            />
-          </View>
 
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Alarm Tipi</Text>
-              <Text style={styles.settingDescription}>
-                Bildirim veya telefon alarmı seçebilirsiniz
-              </Text>
-            </View>
-            <View style={styles.alarmTypeContainer}>
+              <Text style={[styles.small, { marginTop: 18 }]}>YASAL VE GİZLİLİK</Text>
+              
               <TouchableOpacity
-                style={[
-                  styles.alarmTypeButton,
-                  alarmType === 'notification' && styles.alarmTypeButtonActive
-                ]}
-                onPress={() => handleAlarmTypeChange('notification')}
+                style={styles.disclaimerSetting}
+                onPress={() => {
+                  Alert.alert(
+                    '🔒 Gizlilik Politikası',
+                    'Gizlilik politikamızı görüntülemek için GitHub sayfasını açmak ister misiniz?',
+                    [
+                      { text: 'İptal', style: 'cancel' },
+                      { 
+                        text: 'Aç', 
+                        onPress: () => Linking.openURL('https://github.com/orginal/knightrehberapi/blob/main/PRIVACY_POLICY.md').catch(err => 
+                          Alert.alert('Hata', 'Link açılamadı. Lütfen daha sonra tekrar deneyin veya e-posta ile iletişime geçin: advertknightrehber@gmail.com')
+                        )
+                      }
+                    ]
+                  );
+                }}
               >
-                <Text style={[
-                  styles.alarmTypeText,
-                  alarmType === 'notification' && styles.alarmTypeTextActive
-                ]}>
-                  📢 Bildirim
-                </Text>
+                <Text style={styles.disclaimerSettingText}>🔒 Gizlilik Politikası</Text>
               </TouchableOpacity>
+              
               <TouchableOpacity
-                style={[
-                  styles.alarmTypeButton,
-                  alarmType === 'phone' && styles.alarmTypeButtonActive
-                ]}
-                onPress={() => handleAlarmTypeChange('phone')}
+                style={styles.disclaimerSetting}
+                onPress={() => {
+                  Alert.alert(
+                    'Genel Sorumluluk Reddi Beyanı',
+                    "Knight Online'ın tüm hakları Mgame Corp.'a aittir ve Game Cafe Services, Inc. tarafından yayımlanır. Knight Rehber uygulaması, Mgame ve NTTGame'den bağımsızdır.Uygulama da bulunan bilgiler internet ortamından ve oyun içinden toplanan verilerle oluşturulmuştur. Verilerin doğruluğu garantisi verilmemektedir.Uygulamadaki verilere dayanarak oyun içi ya da dışı oluşabilecek sorunlardan KNIGHT REHBER uygulaması sorumlu tutulamaz.",
+                    [{ text: 'Tamam' }]
+                  );
+                }}
               >
-                <Text style={[
-                  styles.alarmTypeText,
-                  alarmType === 'phone' && styles.alarmTypeTextActive
-                ]}>
-                  ⏰ Telefon Alarmı
-                </Text>
+                <Text style={styles.disclaimerSettingText}>📄 Sorumluluk Reddi Beyanını Oku</Text>
               </TouchableOpacity>
-            </View>
-          </View>
+            </>
+          )}
 
-          <Text style={[styles.small, { marginTop: 18 }]}>SORUMLULUK REDDİ</Text>
-          <TouchableOpacity
-            style={styles.disclaimerSetting}
-            onPress={() => {
-              Alert.alert(
-                'Genel Sorumluluk Reddi Beyanı',
-                "Knight Online'ın tüm hakları Mgame Corp.'a aittir ve Game Cafe Services, Inc. tarafından yayımlanır. Knight Rehber uygulaması, Mgame ve NTTGame'den bağımsızdır.Uygulama da bulunan bilgiler internet ortamından ve oyun içinden toplanan verilerle oluşturulmuştur. Verilerin doğruluğu garantisi verilmemektedir.Uygulamadaki verilere dayanarak oyun içi ya da dışı oluşabilecek sorunlardan KNIGHT REHBER uygulaması sorumlu tutulamaz.",
-                [{ text: 'Tamam' }]
-              );
-            }}
-          >
-            <Text style={styles.disclaimerSettingText}>📄 Sorumluluk Reddi Beyanını Oku</Text>
-          </TouchableOpacity>
+          {activeTab === 'geri-bildirim' && (
+            <>
+              <View style={{ alignItems: "center", marginTop: 10 }}>
+                <Text style={styles.profileName}>💡 Geri Bildirim</Text>
+                <Text style={styles.profileEmail}>Öneri ve görüşlerinizi bizimle paylaşın</Text>
+              </View>
 
-          <Text style={[styles.small, { marginTop: 18 }]}>ÖNERİ / GERİ BİLDİRİM</Text>
-          <TextInput
-            style={styles.textArea}
-            placeholder="Görüşünüzü yazın..."
-            placeholderTextColor="#8E97A8"
-            multiline
-            value={text}
-            onChangeText={setText}
-          />
+              <Text style={[styles.small, { marginTop: 18 }]}>ÖNERİ / GERİ BİLDİRİM</Text>
+              <TextInput
+                style={styles.textArea}
+                placeholder="Görüşünüzü yazın..."
+                placeholderTextColor="#8E97A8"
+                multiline
+                value={text}
+                onChangeText={setText}
+              />
 
-          <Text style={[styles.small, { marginTop: 18 }]}>HIZLI İLETİŞİM</Text>
-          <View style={styles.quickContactButtons}>
-            <TouchableOpacity
-              style={styles.contactButton}
-              onPress={() => openEmail('Şikayet/Öneri', 'Merhaba, Knight Rehber uygulaması hakkında şikayet/önerim var:')}
-            >
-              <Text style={styles.contactButtonText}>💡 Şikayet/Öneri</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.contactButton}
-              onPress={() => openEmail('Fotoğraf Gönderme', 'Merhaba, Knight Rehber uygulaması için fotoğraf göndermek istiyorum.')}
-            >
-              <Text style={styles.contactButtonText}>📸 Fotoğraf Gönder</Text>
-            </TouchableOpacity>
-          </View>
+              <Text style={[styles.small, { marginTop: 18 }]}>HIZLI İLETİŞİM</Text>
+              <TouchableOpacity
+                style={styles.contactButtonFull}
+                onPress={() => openEmail('Şikayet/Öneri', 'Merhaba, Knight Rehber uygulaması hakkında şikayet/önerim var:')}
+              >
+                <Text style={styles.contactButtonText}>💡 Şikayet/Öneri Gönder</Text>
+              </TouchableOpacity>
 
-          <View style={styles.modalButtons}>
-            <TouchableOpacity style={styles.sendBtn} onPress={sendFeedback}>
-              <Text style={styles.sendBtnText}>Gönder</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.sendBtn} onPress={sendFeedback}>
+                  <Text style={styles.sendBtnText}>Gönder</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
 
         </View>
       </View>
@@ -751,465 +990,10 @@ const DisclaimerModal = ({ visible, onAccept }) => {
   );
 };
 
-// DÜZELTİLMİŞ ALARM SİSTEMİ - GELİŞTİRİLMİŞ VERSİYON
-const useAlarmSystem = () => {
-  const auth = useAuth();
-  const { user, saveAlarmsToStorage, loadAlarmsFromStorage, loadAlarmTypeFromStorage } = auth;
-  const [alarms, setAlarms] = useState({});
-  const [alarmType, setAlarmType] = useState('notification');
-
-  // Alarm tipini ve alarmları yükle
-  useEffect(() => {
-    const loadAlarmData = async () => {
-      if (user) {
-        const savedAlarms = await loadAlarmsFromStorage(user.id);
-        const savedAlarmType = await loadAlarmTypeFromStorage();
-        setAlarms(savedAlarms || {});
-        setAlarmType(savedAlarmType);
-      }
-    };
-    loadAlarmData();
-  }, [user]);
-
-  // Bildirim kanalını kur
-  useEffect(() => {
-    setupNotificationChannel();
-  }, []);
-
-  // Bildirim izinlerini kontrol et
-  const checkNotificationPermissions = async () => {
-    try {
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-      
-      if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-      
-      return finalStatus === 'granted';
-    } catch (error) {
-      console.log('❌ Bildirim izni kontrol hatası:', error);
-      return false;
-    }
-  };
-
-  // Tüm bildirimleri temizle
-  const clearAllNotifications = async () => {
-    try {
-      await Notifications.cancelAllScheduledNotificationsAsync();
-      console.log('✅ Tüm bildirimler temizlendi');
-    } catch (error) {
-      console.log('❌ Bildirim temizleme hatası:', error);
-    }
-  };
-
-  // Doğru zamanlı bildirim oluştur
-  const createNotificationAlarm = async (etkinlik, timeStr, isFiveMinBefore = false) => {
-    try {
-      const hasPermission = await checkNotificationPermissions();
-      if (!hasPermission) {
-        console.log('❌ Bildirim izni yok');
-        return null;
-      }
-
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      const now = new Date();
-      const targetTime = new Date();
-      
-      targetTime.setHours(hours, minutes, 0, 0);
-      
-      // Eğer hedef zaman bugün geçtiyse, yarına ayarla
-      if (targetTime <= now) {
-        targetTime.setDate(targetTime.getDate() + 1);
-      }
-
-      // 5 dakika önce için zamanı ayarla
-      if (isFiveMinBefore) {
-        targetTime.setMinutes(targetTime.getMinutes() - 5);
-      }
-
-      const triggerTime = targetTime.getTime() - now.getTime();
-      
-      // Geçmişe alarm kurma
-      if (triggerTime <= 0) {
-        console.log(`⏰ Geçmiş zaman atlandı: ${etkinlik.name} - ${timeStr}`);
-        return null;
-      }
-
-      const notificationId = await Notifications.scheduleNotificationAsync({
-        content: {
-          title: isFiveMinBefore ? `⏰ 5 Dakika Kala - ${etkinlik.name}` : `🎯 Şimdi - ${etkinlik.name}`,
-          body: isFiveMinBefore 
-            ? `${etkinlik.description} başlamasına 5 dakika kaldı! Hazırlanın.` 
-            : `${etkinlik.description} şimdi başlıyor! Katılın.`,
-          sound: 'default',
-          data: { 
-            etkinlikId: etkinlik.id,
-            etkinlikName: etkinlik.name,
-            time: timeStr,
-            type: isFiveMinBefore ? '5dk_once' : 'tam_zaman'
-          },
-        },
-        trigger: {
-          seconds: Math.floor(triggerTime / 1000),
-        },
-      });
-
-      console.log(`✅ ${isFiveMinBefore ? '5dk önce' : 'Tam zaman'} bildirimi oluşturuldu: ${etkinlik.name} - ${timeStr} (ID: ${notificationId})`);
-      return notificationId;
-    } catch (error) {
-      console.log('❌ Bildirim oluşturma hatası:', error);
-      return null;
-    }
-  };
-
-  // Alarm ayarla
-  const scheduleAlarm = async (etkinlikId, etkinlik) => {
-    if (!user) {
-      Alert.alert('Uyarı', 'Alarm özelliğini kullanmak için giriş yapmalısınız.');
-      return false;
-    }
-
-    try {
-      // Önce mevcut alarmları temizle
-      await cancelAlarm(etkinlikId);
-
-      const scheduledIds = [];
-
-      // Tüm saatler için alarm ayarla - SADECE 5 DAKİKA KALA VE ZAMANINDA
-      for (const timeStr of etkinlik.times) {
-        // 5 dakika önce bildirimi
-        const fiveMinBeforeId = await createNotificationAlarm(etkinlik, timeStr, true);
-        if (fiveMinBeforeId) scheduledIds.push(fiveMinBeforeId);
-
-        // Tam zamanında bildirim
-        const onTimeId = await createNotificationAlarm(etkinlik, timeStr, false);
-        if (onTimeId) scheduledIds.push(onTimeId);
-      }
-
-      // Alarm durumunu kaydet
-      const newAlarms = {
-        ...alarms,
-        [etkinlikId]: {
-          active: true,
-          type: alarmType,
-          lastScheduled: new Date().toISOString(),
-          scheduledIds: scheduledIds.filter(id => id !== null),
-          scheduledTimes: etkinlik.times,
-          etkinlikName: etkinlik.name
-        }
-      };
-      
-      setAlarms(newAlarms);
-      if (user) {
-        await saveAlarmsToStorage(user.id, newAlarms);
-      }
-
-      console.log(`🎉 ${etkinlik.name} için alarm ayarlandı! Toplam ${scheduledIds.length} bildirim`);
-      return true;
-    } catch (error) {
-      console.log('❌ Alarm ayarlama hatası:', error);
-      Alert.alert('Hata', 'Alarm ayarlanırken bir hata oluştu: ' + error.message);
-      return false;
-    }
-  };
-
-  // Alarmı kaldır
-  const cancelAlarm = async (etkinlikId) => {
-    try {
-      const alarmData = alarms[etkinlikId];
-      
-      // Kayıtlı alarm ID'lerini kaldır
-      if (alarmData?.scheduledIds) {
-        for (const notificationId of alarmData.scheduledIds) {
-          await Notifications.cancelScheduledNotificationAsync(notificationId);
-        }
-      }
-
-      // Alarm durumunu güncelle
-      const newAlarms = { ...alarms };
-      delete newAlarms[etkinlikId];
-      setAlarms(newAlarms);
-      if (user) {
-        await saveAlarmsToStorage(user.id, newAlarms);
-      }
-
-      console.log(`🔕 ${etkinlikId} alarmları kaldırıldı`);
-      return true;
-    } catch (error) {
-      console.log('❌ Alarm kaldırma hatası:', error);
-      return false;
-    }
-  };
-
-  // Tüm alarmları temizle
-  const clearAllAlarms = async () => {
-    try {
-      await clearAllNotifications();
-      setAlarms({});
-      if (user) {
-        await saveAlarmsToStorage(user.id, {});
-      }
-      console.log('✅ Tüm alarmlar temizlendi');
-    } catch (error) {
-      console.log('❌ Tüm alarmları temizleme hatası:', error);
-    }
-  };
-
-  // Alarm durumunu değiştir
-  const toggleAlarm = async (etkinlikId, etkinlik) => {
-    const isActive = alarms[etkinlikId]?.active;
-
-    if (isActive) {
-      const success = await cancelAlarm(etkinlikId);
-      if (success) {
-        Alert.alert('Alarm Kapatıldı', `${etkinlik.name} alarmları kapatıldı.`);
-      } else {
-        Alert.alert('Hata', 'Alarm kapatılırken bir hata oluştu.');
-      }
-    } else {
-      const success = await scheduleAlarm(etkinlikId, etkinlik);
-      if (success) {
-        Alert.alert(
-          'Alarm Ayarlandı 🎯',
-          `${etkinlik.name} için alarmlar ayarlandı!\n\n⏰ Saatler: ${etkinlik.times.join(', ')}\n\n🔔 Bildirimler:\n• Etkinlikten 5 dakika önce\n• Etkinlik tam zamanında`
-        );
-      } else {
-        Alert.alert('Hata', 'Alarm ayarlanırken bir hata oluştu.');
-      }
-    }
-  };
-
-  return {
-    alarms,
-    alarmType,
-    setAlarmType,
-    toggleAlarm,
-    scheduleAlarm,
-    cancelAlarm,
-    clearAllAlarms
-  };
-};
-
-// GÜNCELLENMİŞ KnightNostalji Bileşeni - Backend Entegre
-const KnightNostaljiScreen = () => {
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [nostaljiFotograflar, setNostaljiFotograflar] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Nostalji fotoğraflarını yükle
-  const loadNostaljiFotograflar = async () => {
-    try {
-      setLoading(true);
-      
-      // Backend'den fotoğrafları çek
-      const backendFotograflar = await ApiService.getNostaljiFotograflar();
-      
-      if (backendFotograflar && backendFotograflar.length > 0) {
-        // Backend'den gelen verileri kullan
-        setNostaljiFotograflar(backendFotograflar);
-        await AsyncStorage.setItem('nostaljiFotograflar', JSON.stringify(backendFotograflar));
-      } else {
-        // Backend'den veri gelmezse local storage'dan yükle
-        const savedFotograflar = await AsyncStorage.getItem('nostaljiFotograflar');
-        
-        if (savedFotograflar) {
-          setNostaljiFotograflar(JSON.parse(savedFotograflar));
-        } else {
-          // Varsayılan fotoğraflar
-          const defaultFotograflar = [
-            {
-              id: 'k1',
-              title: 'Eski Knight Online 1',
-              image: require('./assets/ko1.jpg')
-            },
-            {
-              id: 'k2',
-              title: 'Eski Knight Online 2',
-              image: require('./assets/ko2.jpg')
-            },
-            {
-              id: 'k3',
-              title: 'Eski Knight Online 3',
-              image: require('./assets/ko3.jpg')
-            },
-            {
-              id: 'k4',
-              title: 'Eski Knight Online 4',
-              image: require('./assets/ko4.jpg')
-            },
-            {
-              id: 'k5',
-              title: 'Eski Knight Online 5',
-              image: require('./assets/ko5.jpg')
-            },
-            {
-              id: 'k6',
-              title: 'Eski Knight Online 6',
-              image: require('./assets/ko6.jpg')
-            },
-          ];
-          setNostaljiFotograflar(defaultFotograflar);
-          await AsyncStorage.setItem('nostaljiFotograflar', JSON.stringify(defaultFotograflar));
-        }
-      }
-    } catch (error) {
-      console.log('Nostalji fotoğrafları yüklenirken hata:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadNostaljiFotograflar();
-    
-    // Her 12 saatte bir fotoğrafları kontrol et
-    const interval = setInterval(loadNostaljiFotograflar, 12 * 60 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const openImage = (foto, index) => {
-    setSelectedImage(foto);
-    setCurrentImageIndex(index);
-  };
-
-  const nextImage = () => {
-    const nextIndex = (currentImageIndex + 1) % nostaljiFotograflar.length;
-    setCurrentImageIndex(nextIndex);
-    setSelectedImage(nostaljiFotograflar[nextIndex]);
-  };
-
-  const prevImage = () => {
-    const prevIndex = (currentImageIndex - 1 + nostaljiFotograflar.length) % nostaljiFotograflar.length;
-    setCurrentImageIndex(prevIndex);
-    setSelectedImage(nostaljiFotograflar[prevIndex]);
-  };
-
-  const handleRefresh = () => {
-    loadNostaljiFotograflar();
-    Alert.alert('Başarılı', 'Nostalji fotoğrafları güncellendi!');
-  };
-
-  const renderImage = (foto, index) => {
-    return (
-      <TouchableOpacity
-        key={foto.id}
-        style={styles.nostaljiImageContainer}
-        onPress={() => openImage(foto, index)}
-      >
-        <Image
-          source={foto.image}
-          style={styles.nostaljiImage}
-          resizeMode="cover"
-        />
-        <View style={styles.nostaljiImageInfo}>
-          <Text style={styles.nostaljiImageTitle}>{foto.title}</Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  if (loading) {
-    return (
-      <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
-        <View style={styles.tabContent}>
-          <Text style={styles.homeTitle}>📸 KnightNostalji</Text>
-          <Text style={styles.muted}>Yükleniyor...</Text>
-        </View>
-      </ScrollView>
-    );
-  }
-
-  return (
-    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
-      <View style={styles.tabContent}>
-        <View style={styles.nostaljiHeader}>
-          <Text style={styles.homeTitle}>📸 KnightNostalji</Text>
-          <TouchableOpacity onPress={handleRefresh}>
-            <Text style={styles.refreshButton}>🔄</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionDescription}>
-            Knight Online'ın unutulmaz eski günlerinden nostaljik fotoğraflar
-          </Text>
-
-          <View style={styles.infoBox}>
-            <Text style={styles.infoText}>
-              Sizde paylaşmamızı istediğiniz eski Knight Online görsellerinizi info@knightrehber.com adresine gönderebilirsiniz.
-            </Text>
-          </View>
-
-          <View style={styles.nostaljiGrid}>
-            {nostaljiFotograflar.map(renderImage)}
-          </View>
-        </View>
-      </View>
-
-      {/* Modal for full screen image view */}
-      <Modal
-        visible={selectedImage !== null}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setSelectedImage(null)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.fullScreenImageContainer}>
-            <TouchableOpacity
-              style={styles.navButtonLeft}
-              onPress={prevImage}
-            >
-              <Text style={styles.navButtonText}>‹</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.fullScreenImageTouchable}
-              activeOpacity={1}
-            >
-              <Image
-                source={selectedImage?.image}
-                style={styles.fullScreenImage}
-                resizeMode="contain"
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.navButtonRight}
-              onPress={nextImage}
-            >
-              <Text style={styles.navButtonText}>›</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.imageInfoOverlay}>
-            <Text style={styles.fullImageTitle}>{selectedImage?.title}</Text>
-            <Text style={styles.imageCounter}>
-              {currentImageIndex + 1} / {nostaljiFotograflar.length}
-            </Text>
-            <Text style={styles.nostaljiWatermark}>
-              KnightRehber Nostalji Arşivi
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={() => setSelectedImage(null)}
-          >
-            <Text style={styles.closeButtonText}>✕</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
-    </ScrollView>
-  );
-};
-
 // Skill-Stat Reset Tablosu Bileşeni
 const SkillStatResetScreen = () => {
   const resetData = [
- { level: 1, skill: 0, stat: 0 },
+  { level: 1, skill: 0, stat: 0 },
   { level: 2, skill: 60, stat: 40 },
   { level: 3, skill: 240, stat: 160 },
   { level: 4, skill: 660, stat: 440 },
@@ -1297,6 +1081,7 @@ const SkillStatResetScreen = () => {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
       <View style={styles.tabContent}>
+        <View style={{ paddingTop: 70 }} />
         <Text style={styles.homeTitle}>📊 Skill-Stat Reset</Text>
         <Text style={styles.sectionDescription}>
           Skill ve Stat reset maliyetleri
@@ -1343,12 +1128,1224 @@ const SkillStatResetScreen = () => {
   );
 };
 
+// Rebirth Sistemi Bileşeni
+const RebirthSystemScreen = () => {
+  const rebirthExpData = [
+    { level: '83/0', exp: 8705986960 },
+    { level: '83/1', exp: 9576585656 },
+    { level: '83/2', exp: 10534244222 },
+    { level: '83/3', exp: 11587668644 },
+    { level: '83/4', exp: 12746435508 },
+    { level: '83/5', exp: 14021079059 },
+    { level: '83/6', exp: 15423186965 },
+    { level: '83/7', exp: 16965505661 },
+    { level: '83/8', exp: 18662056227 },
+    { level: '83/9', exp: 20528261850 },
+    { level: '83/10', exp: 22581088035 },
+    { level: '83/11', exp: 24839196839 },
+    { level: '83/12', exp: 27323116523 },
+    { level: '83/13', exp: 30055428175 },
+    { level: '83/14', exp: 33060970992 },
+    { level: '83/15', exp: 36367068091 },
+  ];
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
+      <View style={styles.tabContent}>
+        <View style={{ paddingTop: 70 }} />
+        <Text style={styles.homeTitle}>🔄 Rebirth Sistemi 83/1-15</Text>
+        <Text style={styles.sectionDescription}>
+          Rebirth seviye sistemi sayesinde artık karakter seviyelerimiz 83/15 LV'a kadar geliştirilebilir.
+        </Text>
+
+        <View style={styles.card}>
+          <Text style={styles.eventName}>📌 Önemli Not</Text>
+          <Text style={styles.muted}>
+            Agartha Pandora Zero ve Felis sunucularında son 83/10'dur
+          </Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.eventName}>✨ Avantajları</Text>
+          
+          <View style={styles.stepContainer}>
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>1</Text>
+              <Text style={styles.stepText}>
+                Seviye atladığımız her rebirth işleminde bütün görevlerimiz sıfırlanıyor Exp ve 70-80 Quest'ler dahil.
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>2</Text>
+              <Text style={styles.stepText}>
+                Her Rebirth seviyesinde 2 Stat Point veriyor ve 83/15 LV geldiğimizde toplamda 30 stat point kazandırmış oluyoruz ve bu stat pointleri 255 + olarak verebiliyoruz. Örn. Warrior Job için 255 STR +30 STR verebiliriz bu sayede U bastığımızda STR : 255+30 olarak gözükür.
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>3</Text>
+              <Text style={styles.stepText}>
+                83/1 Rebirth Bastıktan sonra karakterimizin başında rebirth sembolü çıkıyor ve kalıcıdır.
+              </Text>
+            </View>
+
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>4</Text>
+              <Text style={styles.stepText}>
+                83/6 Rebirth Seviyesine ulaştığınızda karakterinizin üstündeki sembol değişmektedir.
+              </Text>
+            </View>
+
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>5</Text>
+              <Text style={styles.stepText}>
+                83/11 Rebirth Seviyesine ulaştığınızda karakterinizin üstündeki sembol değişmektedir.
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.eventName}>📊 Rebirth Seviyeleri Tecrübe Miktarları</Text>
+          
+          {/* Tablo Başlığı */}
+          <View style={styles.expTableHeader}>
+            <Text style={[styles.expTableHeaderText, { flex: 1 }]}>Seviye</Text>
+            <Text style={[styles.expTableHeaderText, { flex: 2 }]}>Exp Miktarı</Text>
+          </View>
+
+          {/* Tablo İçeriği */}
+          {rebirthExpData.map((item, index) => (
+            <View key={index} style={[
+              styles.expTableRow,
+              index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd
+            ]}>
+              <Text style={[styles.expTableCell, { flex: 1, fontWeight: 'bold' }]}>
+                {item.level}
+              </Text>
+              <Text style={[styles.expTableCell, { flex: 2 }]}>
+                {item.exp.toLocaleString()}
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.eventName}>📋 İstenilen Şartlar - Rebirth 1-10 Seviyesi İçin</Text>
+          
+          <View style={styles.stepContainer}>
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>1</Text>
+              <Text style={styles.stepText}>
+                83 %100 olmak (Not: (U) Karakter İnfo'da Exp Barın tamamen eşit olması gerekiyor)
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>2</Text>
+              <Text style={styles.stepText}>
+                100.000.000 Noah Oyun parası
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>3</Text>
+              <Text style={styles.stepText}>
+                10.000 Ulusal Puan Olması gerekiyor (10k Np)
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              💡 10k NP yok ise 300.000.000 Noah (3gb) para ile bu adımı geçebiliyorsunuz.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.eventName}>📋 İstenilen Şartlar - Rebirth 11-15 Seviyesi İçin</Text>
+          
+          <View style={styles.stepContainer}>
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>1</Text>
+              <Text style={styles.stepText}>
+                83/10 %100 olmak (Not: (U) Karakter İnfo'da Exp Barın tamamen eşit olması gerekiyor)
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>2</Text>
+              <Text style={styles.stepText}>
+                200.000.000 Noah Oyun parası
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>3</Text>
+              <Text style={styles.stepText}>
+                Ronark Land haritasının merkezinde 200 Karşı Irktan oyuncu kesme görevinin tamamlanması
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              💡 200 Kill görevini yapmak istemiyorsanız, 500.000.000 Noah (5gb) para ile bu adımı geçebiliyorsunuz.
+            </Text>
+          </View>
+
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              ⚠️ Not: Üstünüzde Mutlaka boş yer olması gerekiyor eğer invertory'niz full ise hesabınız bug'ta kalır ve rebirth basamazsınız.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.eventName}>📝 Rebirth Yapma Adımları</Text>
+          
+          <View style={styles.stepContainer}>
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>1</Text>
+              <Text style={styles.stepText}>
+                İlk olarak Maradon'daki [Tarot Reader] Mekin'e gidiyoruz.
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>2</Text>
+              <Text style={styles.stepText}>
+                Reincarnation' Seçiyoruz
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>3</Text>
+              <Text style={styles.stepText}>
+                Proof of Credentials : Power'ı Seçiyoruz ve Görevi Alıyoruz.
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>4</Text>
+              <Text style={styles.stepText}>
+                Tekrar Proof of Experience : Power'a gelip görevi teslim ediyoruz.
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>5</Text>
+              <Text style={styles.stepText}>
+                Credentials : Proof of Goods Seçiyoruz ve Görevi alıyoruz.
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>6</Text>
+              <Text style={styles.stepText}>
+                Tekrar Credentials:Proof of Goods'a gelip görevi teslim ediyoruz ( 1 GB paramızı alıcak )
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>7</Text>
+              <Text style={styles.stepText}>
+                Credentials : Proof of Fame'a geliyoruz ve Görevi alıyoruz.
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>8</Text>
+              <Text style={styles.stepText}>
+                Tekrar Credentials : Proof of Fame'a gelip görevi teslim ediyoruz. ( 10k Ulusal Puan NP Alıcak bizden )
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              ✅ Bu İşlemlerden sonra Bize " Qualification of Rebirth " Esyasını bize vericek.
+            </Text>
+          </View>
+
+          <View style={styles.stepContainer}>
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>9</Text>
+              <Text style={styles.stepText}>
+                Reincarnation'a girip Reincarnation'u seçiyoruz ve çıkan " For Example,for the country! " seçiyoruz.
+              </Text>
+            </View>
+            
+            <View style={styles.step}>
+              <Text style={styles.stepNumber}>10</Text>
+              <Text style={styles.stepText}>
+                Stat Pointleri vereceğimiz Pencere açılıyor.Ordan istediğimize verip " Rebirth after Applying " seçiyoruz.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              💡 Not: Kullanılan Stat pointleri moradon'da bulunan [Grand Merchant] Kaishan npc üzerinden 1gb karşılığı sıfırlayabilirsiniz.
+            </Text>
+          </View>
+        </View>
+      </View>
+    </ScrollView>
+  );
+};
+
+// Farm Geliri Hesapla Bileşeni
+const FarmGeliriScreen = () => {
+  const [mode, setMode] = useState('1hour'); // '1hour' veya 'unlimited'
+  const [isRunning, setIsRunning] = useState(false);
+  const [startTime, setStartTime] = useState(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [initialCoins, setInitialCoins] = useState('');
+  const [initialPot, setInitialPot] = useState('');
+  const [initialMana, setInitialMana] = useState('');
+  const [initialWolf, setInitialWolf] = useState('');
+  const [initialKitap, setInitialKitap] = useState('');
+  const [showResultModal, setShowResultModal] = useState(false);
+  const [finalCoins, setFinalCoins] = useState('');
+  const [finalPot, setFinalPot] = useState('');
+  const [finalMana, setFinalMana] = useState('');
+  const [finalWolf, setFinalWolf] = useState('');
+  const [finalKitap, setFinalKitap] = useState('');
+  const [busCount, setBusCount] = useState('');
+  const [besCount, setBesCount] = useState('');
+  const [calculationResult, setCalculationResult] = useState(null);
+  const [showInfoModal, setShowInfoModal] = useState(false);
+  const [infoText, setInfoText] = useState('');
+  
+  const intervalRef = useRef(null);
+  const notificationIdRef = useRef(null);
+  const notificationIntervalRef = useRef(null);
+
+  // Farm durumunu kaydet
+  const saveFarmState = async (state) => {
+    try {
+      await AsyncStorage.setItem('farmState', JSON.stringify(state));
+    } catch (error) {
+      console.error('Farm durumu kaydedilemedi:', error);
+    }
+  };
+
+  // Farm durumunu yükle
+  const loadFarmState = async () => {
+    try {
+      const savedState = await AsyncStorage.getItem('farmState');
+      if (savedState) {
+        const state = JSON.parse(savedState);
+        const savedStartTime = new Date(state.startTime);
+        const now = new Date();
+        const elapsed = Math.floor((now - savedStartTime) / 1000);
+        
+        // Eğer 1 saatlik modda ve süre dolmuşsa
+        if (state.mode === '1hour' && elapsed >= 3600) {
+          // Durumu temizle
+          await AsyncStorage.removeItem('farmState');
+          return null;
+        }
+        
+        return state;
+      }
+    } catch (error) {
+      console.error('Farm durumu yüklenemedi:', error);
+    }
+    return null;
+  };
+
+  // Farm durumunu temizle
+  const clearFarmState = async () => {
+    try {
+      await AsyncStorage.removeItem('farmState');
+    } catch (error) {
+      console.error('Farm durumu temizlenemedi:', error);
+    }
+  };
+
+  // Uygulama açıldığında kaydedilmiş durumu yükle
+  useEffect(() => {
+    const restoreFarmState = async () => {
+      const savedState = await loadFarmState();
+      if (savedState) {
+        setMode(savedState.mode);
+        setInitialCoins(savedState.initialCoins || '');
+        setInitialPot(savedState.initialPot || '');
+        setInitialMana(savedState.initialMana || '');
+        setInitialWolf(savedState.initialWolf || '');
+        setInitialKitap(savedState.initialKitap || '');
+        
+        const savedStartTime = new Date(savedState.startTime);
+        setStartTime(savedStartTime);
+        setIsRunning(true);
+        
+        // Geçen süreyi hesapla
+        const now = new Date();
+        const elapsed = Math.floor((now - savedStartTime) / 1000);
+        
+        if (savedState.mode === '1hour') {
+          // Geri sayım: 3600'den başlayıp 0'a iner
+          const remaining = Math.max(0, 3600 - elapsed);
+          setElapsedTime(remaining);
+        } else {
+          // İleri sayım: 0'dan başlayıp artar
+          setElapsedTime(elapsed);
+        }
+      }
+    };
+    
+    restoreFarmState();
+  }, []);
+
+  // Fiyatlar
+  const PRICES = {
+    pot: 3200,
+    mana: 5400,
+    wolf: 480,
+    kitap: 2400,
+    bus: 2200000,
+    bes: 1000000,
+  };
+
+  // Farm bitti bildirimi
+  const sendNotification = useCallback(async () => {
+    try {
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status === 'granted') {
+        // ✅ FARM BİLDİRİMİ: Farm bildirimleri için ayrı channel kullan
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('farm', {
+            name: 'Farm Bildirimleri',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#FFD66B',
+            sound: true,
+            enableLights: true,
+            enableVibrate: true,
+            showBadge: true,
+          });
+        }
+        
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: '⏰ Farm Bitti',
+            body: 'Farm süreniz doldu! Sonuçları girebilirsiniz.',
+            sound: true,
+            priority: Notifications.AndroidNotificationPriority.MAX,
+            data: { type: 'farm_finished' }, // Farm bildirimi olduğunu belirt
+          },
+          ...(Platform.OS === 'android' && { 
+            channelId: 'farm', // Farm bildirimleri için ayrı channel
+          }),
+          trigger: null, // Hemen gönder
+        });
+      }
+    } catch (error) {
+      console.error('Bildirim hatası:', error);
+    }
+  }, []);
+
+  // Durdur
+  const handleStop = useCallback(async () => {
+    setIsRunning(false);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    // Bildirimi temizle
+    if (notificationIdRef.current) {
+      await Notifications.cancelScheduledNotificationAsync(notificationIdRef.current);
+      notificationIdRef.current = null;
+    }
+    // Durumu temizle
+    await clearFarmState();
+    setShowResultModal(true);
+  }, []);
+
+  // Farm başladı bildirimi
+  const sendStartNotification = useCallback(async () => {
+    try {
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status === 'granted') {
+        // ✅ FARM BİLDİRİMİ: Farm bildirimleri için ayrı channel kullan
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('farm', {
+            name: 'Farm Bildirimleri',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#FFD66B',
+            sound: true,
+            enableLights: true,
+            enableVibrate: true,
+            showBadge: true,
+          });
+        }
+        
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: mode === '1hour' ? '🚀 Farm Başladı (1 Saatlik)' : '🚀 Farm Başladı (Süresiz)',
+            body: mode === '1hour' ? 'Farm başladı! 60 dakika sonra bildirim alacaksınız.' : 'Farm başladı! İstediğiniz zaman durdurabilirsiniz.',
+            sound: true,
+            priority: Notifications.AndroidNotificationPriority.MAX,
+            data: { type: 'farm_started' }, // Farm bildirimi olduğunu belirt
+          },
+          ...(Platform.OS === 'android' && { 
+            channelId: 'farm', // Farm bildirimleri için ayrı channel
+          }),
+          trigger: null,
+        });
+      }
+    } catch (error) {
+      console.error('Bildirim hatası:', error);
+    }
+  }, [mode]);
+
+  // Sayaç güncellemesi
+  useEffect(() => {
+    if (isRunning && startTime) {
+      intervalRef.current = setInterval(() => {
+        const now = new Date();
+        const elapsed = Math.floor((now - startTime) / 1000);
+        
+        if (mode === '1hour') {
+          // Geri sayım: 3600'den başlayıp 0'a iner
+          const remaining = Math.max(0, 3600 - elapsed);
+          setElapsedTime(remaining);
+          
+          // Süre dolduysa
+          if (remaining === 0) {
+            handleStop();
+            sendNotification();
+          }
+        } else {
+          // İleri sayım: 0'dan başlayıp artar
+          setElapsedTime(elapsed);
+        }
+      }, 1000);
+    } else {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [isRunning, startTime, mode, handleStop, sendNotification]);
+
+  // Zamanı formatla
+  const formatTime = (seconds) => {
+    if (mode === '1hour') {
+      // Geri sayım formatı
+      const minutes = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    } else {
+      // İleri sayım formatı
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+  };
+
+  // Başlat
+  const handleStart = async () => {
+    // Boş değerleri kontrol et (0 kabul edilir)
+    const safeParseInt = (value) => {
+      if (!value || value.trim() === '') return 0;
+      const parsed = parseInt(value);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Başlangıç değerlerinin en az birinin girilmiş olması gerekiyor
+    const hasAnyValue = safeParseInt(initialCoins) > 0 || 
+                       safeParseInt(initialPot) > 0 || 
+                       safeParseInt(initialMana) > 0 || 
+                       safeParseInt(initialWolf) > 0 || 
+                       safeParseInt(initialKitap) > 0;
+
+    if (!hasAnyValue) {
+      Alert.alert('Uyarı', 'Lütfen en az bir başlangıç değeri giriniz!');
+      return;
+    }
+
+    const startTimeNow = new Date();
+    setIsRunning(true);
+    setStartTime(startTimeNow);
+    
+    if (mode === '1hour') {
+      setElapsedTime(3600); // 60 dakika = 3600 saniye
+    } else {
+      setElapsedTime(0); // Süresiz modda 0'dan başla
+    }
+    
+    setShowResultModal(false);
+    setCalculationResult(null);
+
+    // Durumu kaydet
+    await saveFarmState({
+      mode,
+      startTime: startTimeNow.toISOString(),
+      initialCoins,
+      initialPot,
+      initialMana,
+      initialWolf,
+      initialKitap,
+    });
+
+    // Farm başladı bildirimi gönder
+    sendStartNotification();
+  };
+
+  // Sıfırla
+  const handleReset = async () => {
+    setIsRunning(false);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    if (notificationIdRef.current) {
+      await Notifications.cancelScheduledNotificationAsync(notificationIdRef.current);
+      notificationIdRef.current = null;
+    }
+    // Durumu temizle
+    await clearFarmState();
+    setStartTime(null);
+    setElapsedTime(0);
+    setInitialCoins('');
+    setInitialPot('');
+    setInitialMana('');
+    setInitialWolf('');
+    setInitialKitap('');
+    setShowResultModal(false);
+    setFinalCoins('');
+    setFinalPot('');
+    setFinalMana('');
+    setFinalWolf('');
+    setFinalKitap('');
+    setBusCount('');
+    setBesCount('');
+    setCalculationResult(null);
+  };
+
+  // Hesapla
+  const handleCalculate = () => {
+    // Boş değerleri 0 olarak kabul et
+    const safeParseInt = (value) => {
+      if (!value || value.trim() === '') return 0;
+      const parsed = parseInt(value);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Kullanılan miktarlar
+    const usedPot = safeParseInt(initialPot) - safeParseInt(finalPot);
+    const usedMana = safeParseInt(initialMana) - safeParseInt(finalMana);
+    const usedWolf = safeParseInt(initialWolf) - safeParseInt(finalWolf);
+    const usedKitap = safeParseInt(initialKitap) - safeParseInt(finalKitap);
+
+    // Masraflar
+    const potCost = usedPot * PRICES.pot;
+    const manaCost = usedMana * PRICES.mana;
+    const wolfCost = usedWolf * PRICES.wolf;
+    const kitapCost = usedKitap * PRICES.kitap;
+    const totalCost = potCost + manaCost + wolfCost + kitapCost;
+
+    // Gelirler
+    const busValue = safeParseInt(busCount) * PRICES.bus;
+    const besValue = safeParseInt(besCount) * PRICES.bes;
+    const finalCoinsValue = safeParseInt(finalCoins);
+    const totalIncome = finalCoinsValue + busValue + besValue;
+
+    // Kar/Zarar
+    const initialCoinsValue = safeParseInt(initialCoins);
+    const netProfit = totalIncome - initialCoinsValue - totalCost;
+
+    setCalculationResult({
+      totalCost,
+      totalIncome,
+      netProfit,
+      usedPot,
+      usedMana,
+      usedWolf,
+      usedKitap,
+      potCost,
+      manaCost,
+      wolfCost,
+      kitapCost,
+      busValue,
+      besValue,
+    });
+  };
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
+      <View style={styles.tabContent}>
+        <View style={{ paddingTop: 70 }} />
+        <Text style={styles.homeTitle}>💰 Farm Geliri Hesapla</Text>
+
+        {/* Başlangıç Değerleri */}
+        <View style={styles.card}>
+          <Text style={styles.eventName}>📥 Başlangıç Değerleri</Text>
+          
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Başlangıç Coins</Text>
+            <TextInput
+              style={styles.input}
+              value={initialCoins}
+              onChangeText={setInitialCoins}
+              placeholder="Farma başlarken üstünüzdeki coins"
+              placeholderTextColor="#8E97A8"
+              keyboardType="numeric"
+              editable={!isRunning}
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <View style={styles.labelWithInfo}>
+              <Text style={styles.inputLabel}>Başlangıç Pot Sayısı</Text>
+              <TouchableOpacity 
+                style={styles.infoButton}
+                onPress={() => {
+                  setInfoText('Pot: 3200 coins');
+                  setShowInfoModal(true);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.infoButtonText}>?</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.input}
+              value={initialPot}
+              onChangeText={setInitialPot}
+              placeholder="Pot sayısı"
+              placeholderTextColor="#8E97A8"
+              keyboardType="numeric"
+              editable={!isRunning}
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <View style={styles.labelWithInfo}>
+              <Text style={styles.inputLabel}>Başlangıç Mana</Text>
+              <TouchableOpacity 
+                style={styles.infoButton}
+                onPress={() => {
+                  setInfoText('Mana: 5400 coins');
+                  setShowInfoModal(true);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.infoButtonText}>?</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.input}
+              value={initialMana}
+              onChangeText={setInitialMana}
+              placeholder="Mana sayısı"
+              placeholderTextColor="#8E97A8"
+              keyboardType="numeric"
+              editable={!isRunning}
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <View style={styles.labelWithInfo}>
+              <Text style={styles.inputLabel}>Başlangıç Wolf Sayısı</Text>
+              <TouchableOpacity 
+                style={styles.infoButton}
+                onPress={() => {
+                  setInfoText('Wolf: 480 coins (2 dakika kullanımı)');
+                  setShowInfoModal(true);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.infoButtonText}>?</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.input}
+              value={initialWolf}
+              onChangeText={setInitialWolf}
+              placeholder="Wolf sayısı"
+              placeholderTextColor="#8E97A8"
+              keyboardType="numeric"
+              editable={!isRunning}
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <View style={styles.labelWithInfo}>
+              <Text style={styles.inputLabel}>Başlangıç Kitap Sayısı</Text>
+              <TouchableOpacity 
+                style={styles.infoButton}
+                onPress={() => {
+                  setInfoText('Kitap: 2400 coins (100 saniye kullanımı)');
+                  setShowInfoModal(true);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.infoButtonText}>?</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.input}
+              value={initialKitap}
+              onChangeText={setInitialKitap}
+              placeholder="Kitap sayısı"
+              placeholderTextColor="#8E97A8"
+              keyboardType="numeric"
+              editable={!isRunning}
+            />
+          </View>
+        </View>
+
+        {/* Mod Seçimi ve Sayaç */}
+        <View style={styles.card}>
+          <Text style={styles.eventName}>⏱️ Farm Süresi</Text>
+          
+          <View style={styles.modeSelector}>
+            <TouchableOpacity
+              style={[styles.modeButton, mode === '1hour' && styles.modeButtonActive]}
+              onPress={() => !isRunning && setMode('1hour')}
+            >
+              <Text style={[styles.modeButtonText, mode === '1hour' && styles.modeButtonTextActive]}>
+                1 Saatlik
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modeButton, mode === 'unlimited' && styles.modeButtonActive]}
+              onPress={() => !isRunning && setMode('unlimited')}
+            >
+              <Text style={[styles.modeButtonText, mode === 'unlimited' && styles.modeButtonTextActive]}>
+                Süresiz
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Sayaç */}
+          <View style={styles.timerContainer}>
+            <Text style={styles.timerText}>{formatTime(elapsedTime)}</Text>
+            <Text style={styles.timerLabel}>
+              {mode === '1hour' ? '1 Saatlik Farm (Geri Sayım)' : 'Süresiz Farm (İleri Sayım)'}
+            </Text>
+          </View>
+
+          {/* Kontrol Butonları */}
+          <View style={styles.controlButtons}>
+            <TouchableOpacity
+              style={[styles.controlButton, styles.startButton, isRunning && styles.buttonDisabled]}
+              onPress={handleStart}
+              disabled={isRunning}
+            >
+              <Text style={styles.controlButtonText}>▶️ Başla</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.controlButton, styles.stopButton, !isRunning && styles.buttonDisabled]}
+              onPress={handleStop}
+              disabled={!isRunning}
+            >
+              <Text style={styles.controlButtonText}>⏸️ Durdur</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.controlButton, styles.resetButton]}
+              onPress={handleReset}
+            >
+              <Text style={styles.controlButtonText}>🔄 Sıfırla</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Sonuç Modal */}
+        <Modal
+          visible={showResultModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowResultModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>📊 Farm Sonuçları</Text>
+              <Text style={styles.modalSubtitle}>
+                Geçen Süre: {formatTime(elapsedTime)}
+              </Text>
+
+              <ScrollView style={styles.modalScroll}>
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Bitiş Coins</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={finalCoins}
+                    onChangeText={setFinalCoins}
+                    placeholder="Kalan coins"
+                    placeholderTextColor="#8E97A8"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Bitiş Pot Sayısı</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={finalPot}
+                    onChangeText={setFinalPot}
+                    placeholder="Kalan pot sayısı"
+                    placeholderTextColor="#8E97A8"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Bitiş Mana</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={finalMana}
+                    onChangeText={setFinalMana}
+                    placeholder="Kalan mana"
+                    placeholderTextColor="#8E97A8"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Bitiş Wolf Sayısı</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={finalWolf}
+                    onChangeText={setFinalWolf}
+                    placeholder="Kalan wolf sayısı"
+                    placeholderTextColor="#8E97A8"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Bitiş Kitap Sayısı</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={finalKitap}
+                    onChangeText={setFinalKitap}
+                    placeholder="Kalan kitap sayısı"
+                    placeholderTextColor="#8E97A8"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <View style={styles.labelWithInfo}>
+                    <Text style={styles.inputLabel}>Bus Sayısı</Text>
+                    <TouchableOpacity 
+                      style={styles.infoButton}
+                      onPress={() => {
+                        setInfoText('Bus: 2.200.000 coins');
+                        setShowInfoModal(true);
+                      }}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.infoButtonText}>?</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    style={styles.input}
+                    value={busCount}
+                    onChangeText={setBusCount}
+                    placeholder="Bus sayısı"
+                    placeholderTextColor="#8E97A8"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <View style={styles.labelWithInfo}>
+                    <Text style={styles.inputLabel}>Bes Sayısı</Text>
+                    <TouchableOpacity 
+                      style={styles.infoButton}
+                      onPress={() => {
+                        setInfoText('Bes: 1.000.000 coins');
+                        setShowInfoModal(true);
+                      }}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.infoButtonText}>?</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    style={styles.input}
+                    value={besCount}
+                    onChangeText={setBesCount}
+                    placeholder="Bes sayısı"
+                    placeholderTextColor="#8E97A8"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                {calculationResult && (
+                  <View style={styles.resultContainer}>
+                    <Text style={styles.resultTitle}>💰 Hesaplama Sonuçları</Text>
+                    
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Kullanılan Pot:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.usedPot} adet</Text>
+                    </View>
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Pot Masrafı:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.potCost.toLocaleString()} coins</Text>
+                    </View>
+
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Kullanılan Mana:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.usedMana} adet</Text>
+                    </View>
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Mana Masrafı:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.manaCost.toLocaleString()} coins</Text>
+                    </View>
+
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Kullanılan Wolf:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.usedWolf} adet</Text>
+                    </View>
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Wolf Masrafı:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.wolfCost.toLocaleString()} coins</Text>
+                    </View>
+
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Kullanılan Kitap:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.usedKitap} adet</Text>
+                    </View>
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Kitap Masrafı:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.kitapCost.toLocaleString()} coins</Text>
+                    </View>
+
+                    <View style={styles.resultDivider} />
+
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Toplam Masraf:</Text>
+                      <Text style={[styles.resultValue, styles.resultValueNegative]}>
+                        {calculationResult.totalCost.toLocaleString()} coins
+                      </Text>
+                    </View>
+
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Bus Değeri:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.busValue.toLocaleString()} coins</Text>
+                    </View>
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Bes Değeri:</Text>
+                      <Text style={styles.resultValue}>{calculationResult.besValue.toLocaleString()} coins</Text>
+                    </View>
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Toplam Gelir:</Text>
+                      <Text style={[styles.resultValue, styles.resultValuePositive]}>
+                        {calculationResult.totalIncome.toLocaleString()} coins
+                      </Text>
+                    </View>
+
+                    <View style={styles.resultDivider} />
+
+                    <View style={styles.resultItem}>
+                      <Text style={styles.resultLabel}>Net Kar/Zarar:</Text>
+                      <Text style={[
+                        styles.resultValue,
+                        calculationResult.netProfit >= 0 ? styles.resultValuePositive : styles.resultValueNegative,
+                        styles.resultValueLarge
+                      ]}>
+                        {calculationResult.netProfit >= 0 ? '+' : ''}{calculationResult.netProfit.toLocaleString()} coins
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={styles.calculateButton}
+                  onPress={handleCalculate}
+                >
+                  <Text style={styles.calculateButtonText}>🧮 Hesapla</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={() => setShowResultModal(false)}
+                >
+                  <Text style={styles.closeButtonText}>Kapat</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Açıklama Modal */}
+        <Modal
+          visible={showInfoModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowInfoModal(false)}
+        >
+          <View style={styles.infoModalOverlay}>
+            <View style={styles.infoModalContent}>
+              <Text style={styles.infoModalText}>{infoText}</Text>
+              <TouchableOpacity
+                style={styles.infoModalCloseButton}
+                onPress={() => setShowInfoModal(false)}
+              >
+                <Text style={styles.infoModalCloseButtonText}>Tamam</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    </ScrollView>
+  );
+};
+
+// Levele Göre Exp Bileşeni
+const ALSkillStatScreen = () => {
+  const expData = [
+    { level: 1, exp: 50 },
+    { level: 2, exp: 100 },
+    { level: 3, exp: 190 },
+    { level: 4, exp: 342 },
+    { level: 5, exp: 581 },
+    { level: 6, exp: 929 },
+    { level: 7, exp: 1393 },
+    { level: 8, exp: 1950 },
+    { level: 9, exp: 2535 },
+    { level: 10, exp: 5070 },
+    { level: 11, exp: 6084 },
+    { level: 12, exp: 7300 },
+    { level: 13, exp: 8760 },
+    { level: 14, exp: 10512 },
+    { level: 15, exp: 12612 },
+    { level: 16, exp: 15136 },
+    { level: 17, exp: 18163 },
+    { level: 18, exp: 21795 },
+    { level: 19, exp: 26154 },
+    { level: 20, exp: 52308 },
+    { level: 21, exp: 60154 },
+    { level: 22, exp: 69177 },
+    { level: 23, exp: 79553 },
+    { level: 24, exp: 91485 },
+    { level: 25, exp: 105207 },
+    { level: 26, exp: 120988 },
+    { level: 27, exp: 139136 },
+    { level: 28, exp: 160006 },
+    { level: 29, exp: 184006 },
+    { level: 30, exp: 368012 },
+    { level: 31, exp: 404813 },
+    { level: 32, exp: 445294 },
+    { level: 33, exp: 489823 },
+    { level: 34, exp: 538805 },
+    { level: 35, exp: 808207 },
+    { level: 36, exp: 889027 },
+    { level: 37, exp: 977929 },
+    { level: 38, exp: 1075721 },
+    { level: 39, exp: 1183293 },
+    { level: 40, exp: 2366586 },
+    { level: 41, exp: 2603244 },
+    { level: 42, exp: 2863568 },
+    { level: 43, exp: 3149924 },
+    { level: 44, exp: 3464916 },
+    { level: 45, exp: 5197374 },
+    { level: 46, exp: 5717111 },
+    { level: 47, exp: 6288822 },
+    { level: 48, exp: 6917704 },
+    { level: 49, exp: 7609474 },
+    { level: 50, exp: 15218948 },
+    { level: 51, exp: 16740842 },
+    { level: 52, exp: 18414926 },
+    { level: 53, exp: 20256418 },
+    { level: 54, exp: 22282059 },
+    { level: 55, exp: 33423088 },
+    { level: 56, exp: 36765396 },
+    { level: 57, exp: 40441935 },
+    { level: 58, exp: 44486128 },
+    { level: 59, exp: 48934740 },
+    { level: 60, exp: 73402110 },
+    { level: 61, exp: 132123798 },
+    { level: 62, exp: 145336177 },
+    { level: 63, exp: 159869794 },
+    { level: 64, exp: 175856773 },
+    { level: 65, exp: 193442450 },
+    { level: 66, exp: 212786695 },
+    { level: 67, exp: 234065364 },
+    { level: 68, exp: 257471900 },
+    { level: 69, exp: 293219090 },
+    { level: 70, exp: 311540999 },
+    { level: 71, exp: 373849198 },
+    { level: 72, exp: 453852927 },
+    { level: 73, exp: 550977453 },
+    { level: 74, exp: 668886628 },
+    { level: 75, exp: 812028367 },
+    { level: 76, exp: 985802438 },
+    { level: 77, exp: 1196764159 },
+    { level: 78, exp: 1452871690 },
+    { level: 79, exp: 1763786231 },
+    { level: 80, exp: 2141236485 },
+    { level: 81, exp: 4317589248 },
+    { level: 82, exp: 6130976733 },
+    { level: 83, exp: 8705986960 },
+  ];
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
+      <View style={styles.tabContent}>
+        <View style={{ paddingTop: 70 }} />
+        <Text style={styles.homeTitle}>📈 Levele Göre Exp</Text>
+        <Text style={styles.sectionDescription}>
+          Seviye bazlı deneyim (exp) miktarları
+        </Text>
+
+        <View style={styles.card}>
+          <Text style={styles.eventName}>Levele Göre Exp Tablosu</Text>
+          
+          {/* Tablo Başlığı */}
+          <View style={styles.expTableHeader}>
+            <Text style={[styles.expTableHeaderText, { flex: 1 }]}>Seviye</Text>
+            <Text style={[styles.expTableHeaderText, { flex: 2 }]}>Exp Miktarı</Text>
+          </View>
+
+          {/* Tablo İçeriği - Alt alta sıralı */}
+          {expData.map((item, index) => (
+            <View key={index} style={[
+              styles.expTableRow,
+              index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd
+            ]}>
+              <Text style={[styles.expTableCell, { flex: 1, fontWeight: 'bold' }]}>
+                {item.level}
+              </Text>
+              <Text style={[styles.expTableCell, { flex: 2 }]}>
+                {item.exp.toLocaleString()}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </ScrollView>
+  );
+};
+
 // Achievements Bileşeni
 const AchievementsScreen = () => {
   const [selectedFilter, setSelectedFilter] = useState('Tümü');
-  const [achievementSearch, setAchievementSearch] = useState('');
 
-const achievementsData = [
+ const achievementsData = [
     { id: 1, name: "Beginning of an Honor", title: "Trainee Soldier", effect: "Attack power +10", description: "Defeat 100 enemy users", reward: "", category: "War -> Common -> Page 1" },
     { id: 2, name: "Battlefield Soldier", title: "Soldier", effect: "Attack power +10, Defense +20", description: "Defeat 500 enemy users", reward: "", category: "War -> Common -> Page 1" },
     { id: 3, name: "Battlefield General", title: "General", effect: "Attack power +13, Defense +1", description: "Defeat 1'000 enemy users", reward: "", category: "War -> Common -> Page 1" },
@@ -1605,21 +2602,11 @@ const achievementsData = [
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
       <View style={styles.tabContent}>
+        <View style={{ paddingTop: 70 }} />
         <Text style={styles.homeTitle}>🏆 Achievements</Text>
         <Text style={styles.sectionDescription}>
           Knight Online başarımları ve ödülleri
         </Text>
-
-        {/* Arama Çubuğu */}
-        <View style={styles.searchContainer}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Başarım ara..."
-            placeholderTextColor="#98A2B3"
-            value={achievementSearch}
-            onChangeText={setAchievementSearch}
-          />
-        </View>
 
         {/* Filtreleme Butonları */}
         <ScrollView
@@ -1688,7 +2675,7 @@ const achievementsData = [
   );
 };
 
-// YENİ MASTER BİLEŞENİ
+// Master Bileşeni
 const MasterScreen = () => {
   const [selectedImage, setSelectedImage] = useState(null);
 
@@ -2004,9 +2991,11 @@ const MasterSkillScreen = () => {
           <View style={styles.tableContainer}>
             <View style={styles.tableHeader}>
               <Text style={[styles.tableHeaderText, {flex: 2}]}>Aksesuar</Text>
-              <Text style={[styles.tableHeaderText, {flex: 1}]}>1 Spell Stone Powder</Text>
-              <Text style={[styles.tableHeaderText, {flex: 1}]}>2 Spell Stone Powder</Text>
-              <Text style={[styles.tableHeaderText, {flex: 1}]}>3 Spell Stone Powder</Text>
+              <Text style={[styles.tableHeaderText, {flex: 1, fontSize: 11}]}>1 Spell Stone Powder</Text>
+              <Text style={[styles.tableHeaderText, {flex: 1, fontSize: 11}]}>2 Spell Stone Powder</Text>
+              <Text style={[styles.tableHeaderText, {flex: 1, fontSize: 11}]}>3 Spell Stone Powder</Text>
+              <Text style={[styles.tableHeaderText, {flex: 1, fontSize: 11}]}>4 Spell Stone Powder</Text>
+              <Text style={[styles.tableHeaderText, {flex: 1, fontSize: 11}]}>5 Spell Stone Powder</Text>
             </View>
             
             {sokmeSanslari.map((item, index) => (
@@ -2015,6 +3004,8 @@ const MasterSkillScreen = () => {
                 <Text style={[styles.tableCell, {flex: 1, color: '#FDB022'}]}>{item.olasilik1}</Text>
                 <Text style={[styles.tableCell, {flex: 1, color: '#FDB022'}]}>{item.olasilik2}</Text>
                 <Text style={[styles.tableCell, {flex: 1, color: '#FDB022'}]}>{item.olasilik3}</Text>
+                <Text style={[styles.tableCell, {flex: 1, color: '#FDB022'}]}>{item.olasilik4}</Text>
+                <Text style={[styles.tableCell, {flex: 1, color: '#FDB022'}]}>{item.olasilik5}</Text>
               </View>
             ))}
           </View>
@@ -2081,16 +3072,1739 @@ const MasterSkillScreen = () => {
   );
 };
 
+// Knight Online Monster Bileşeni
+const MonsterScreen = () => {
+  const [selectedZone, setSelectedZone] = useState('Tümü');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Ham monster verisi (tab-separated format)
+  const rawMonsterData = `Centaur	Hell Abyss	305	327	50	19204	1134	90	455	655	455
+Centaur	Hell Abyss	281	302	50	19204	1134	90	455	655	455
+Centaur	Hell Abyss	324	345	50	19204	1134	90	455	655	455
+Centaur	Hell Abyss	283	302	50	19204	1134	90	455	655	455
+Centaur	Hell Abyss	330	346	50	19204	1134	90	455	655	455
+Flame Rock	Hell Abyss	415	435	50	16615	720	100	25	25	25
+Flame Rock	Hell Abyss	453	470	50	16615	720	100	25	25	25
+Flame Rock	Hell Abyss	453	468	50	16615	720	100	25	25	25
+Flame Rock	Hell Abyss	417	439	50	16615	720	100	25	25	25
+gloom hound	Hell Abyss	168	213	30	5247	316	55	150	150	150
+GOBLIN bouncer	Hell Abyss	331	342	30	1601	303	45	130	130	130
+GOBLIN bouncer	Hell Abyss	283	298	30	1601	303	45	130	130	130
+GOBLIN bouncer	Hell Abyss	295	333	30	1601	303	45	130	130	130
+GOBLIN bouncer	Hell Abyss	323	342	30	1601	303	45	130	130	130
+GOBLIN bouncer	Hell Abyss	291	311	30	1601	303	45	130	130	130
+Hell Fire	Ronark Land	975	975	?	165451	2547	75	555	555	555
+Hell Fire	Ronark Land	1692	1692	20	165451	2547	75	555	555	555
+Hell Fire	Ronark Land	357	357	?	165451	2547	75	555	555	555
+Hell Fire	Ronark Land	1082	1082	?	165451	2547	75	555	555	555
+Hell hound	Luferson Castle	114	136	45	10000	299	52	2000	2000	2000
+Hell hound	Luferson Castle	159	183	45	10000	299	52	2000	2000	2000
+Hell hound	Luferson Castle	109	136	45	10000	299	52	2000	2000	2000
+Hell hound	Luferson Castle	147	173	45	10000	299	52	2000	2000	2000
+Hell hound	Luferson Castle	103	126	45	10000	299	52	2000	2000	2000
+Hell hound	El Morad Castle	1924	1945	45	10000	299	52	2000	2000	2000
+Hell hound	El Morad Castle	1924	1945	45	10000	299	52	2000	2000	2000
+Hell hound	El Morad Castle	1926	1951	45	10000	299	52	2000	2000	2000
+Hell hound	El Morad Castle	1880	1902	45	10000	299	52	2000	2000	2000
+Hell hound	El Morad Castle	1920	1939	45	10000	299	52	2000	2000	2000
+HOBGOBLIN	Hell Abyss	331	342	50	6709	607	71	158	158	158
+HOBGOBLIN	Hell Abyss	309	323	50	6709	607	71	158	158	158
+HOBGOBLIN	Hell Abyss	293	304	50	6709	607	71	158	158	158
+HOBGOBLIN	Hell Abyss	301	328	50	6709	607	71	158	158	158
+Isiloon	Hell Abyss	413	476	32000	1300015	3555	170	1200	1200	1200
+Lutterslan	Hell Abyss	42	87	30	1108	204	30	27	27	27
+Lutterslan	Hell Abyss	40	86	30	1108	204	30	27	27	27
+Lutterslan	Hell Abyss	27	90	30	1108	204	30	27	27	27
+Lutterslan	Hell Abyss	45	88	30	1108	204	30	27	27	27
+Lutterslan	Hell Abyss	36	47	30	1108	204	30	27	27	27
+Manticore	Hell Abyss	321	332	50	12551	994	85	355	355	355
+Manticore	Hell Abyss	292	312	50	12551	994	85	355	355	355
+Manticore	Hell Abyss	325	342	50	12551	994	85	355	355	355
+Manticore	Hell Abyss	336	355	50	12551	994	85	355	355	355
+Manticore	Hell Abyss	279	296	50	12551	994	85	355	355	355
+Orc bandit	Hell Abyss	62	64	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	61	63	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	188	190	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	443	445	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	443	445	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	314	316	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	61	63	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	188	190	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	61	63	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	188	190	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	188	190	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	443	445	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	314	316	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	443	445	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	314	316	30	780	154	10	25	25	50
+Orc bandit	Hell Abyss	314	316	30	780	154	10	25	25	50
+Orc mage	Hell Abyss	74	79	30	912	288	40	178	119	63
+Orc mage	Hell Abyss	32	37	30	912	288	40	178	119	63
+Orc mage	Hell Abyss	93	98	30	912	288	40	178	119	63
+Orc mage	Hell Abyss	49	76	30	912	288	40	178	119	63
+Orc mage	Hell Abyss	77	82	30	912	288	40	178	119	63
+Orc Watcher	Hell Abyss	42	84	30	318	240	30	91	91	49
+Orc Watcher	Hell Abyss	42	88	30	318	240	30	91	91	49
+Orc Watcher	Hell Abyss	47	79	30	318	240	30	91	91	49
+Orc Watcher	Hell Abyss	28	45	30	318	240	30	91	91	49
+Servant of Isiloon	Hell Abyss	450	480	50	33999	1345	130	25	25	25
+Servant of Isiloon	Hell Abyss	411	449	50	33999	1345	130	25	25	25
+Servant of Isiloon	Hell Abyss	425	458	50	33999	1345	130	25	25	25
+Servant of Isiloon	Hell Abyss	435	452	50	33999	1345	130	950	950	950
+Servant of Isiloon	Hell Abyss	412	428	50	33999	1345	130	950	950	950
+Servant of Isiloon	Hell Abyss	431	455	50	33999	1345	130	950	950	950
+Servant of Isiloon	Hell Abyss	457	478	50	33999	1345	130	950	950	950
+Servant of Isiloon	Hell Abyss	455	471	50	33999	1345	130	25	25	25
+Servant of Isiloon	Hell Abyss	421	436	50	33999	1345	130	25	25	25
+Wraith	Hell Abyss	175	205	30	4452	585	65	250	250	250
+Wraith	Hell Abyss	176	209	30	4452	585	65	250	250	250
+Wraith	Hell Abyss	175	207	30	4452	585	65	250	250	250
+Wraith	Hell Abyss	162	171	30	4452	585	65	250	250	250
+Wraith	Hell Abyss	207	220	30	4452	585	65	250	250	250
+Wraith	Hell Abyss	162	177	30	4452	585	65	250	250	250
+Wraith	Hell Abyss	173	202	30	4452	585	65	250	250	250
+Wraith	Hell Abyss	202	219	30	4452	585	65	250	250	250
+Black widow	Desperation Abyss	155	166	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	128	136	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	144	154	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	158	168	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	133	142	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	163	172	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	145	154	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	135	143	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	131	143	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	156	166	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	138	146	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	155	162	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	119	127	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	136	144	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	158	165	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	134	143	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	145	156	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	159	168	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	167	176	30	1932	360	40	120	120	120
+Black widow	Desperation Abyss	145	157	30	1932	360	40	120	120	120
+burning skeleton	Desperation Abyss	340	361	30	4000	410	57	25	79	79
+burning skeleton	Desperation Abyss	361	370	30	4000	410	57	25	79	79
+burning skeleton	Desperation Abyss	331	340	30	4000	410	57	25	79	79
+burning skeleton	Desperation Abyss	329	369	30	4000	410	57	25	79	79
+Cave leech	Desperation Abyss	45	56	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	56	68	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	55	70	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	27	42	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	47	57	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	30	43	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	67	75	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	24	32	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	31	71	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	43	55	32	215	107	20	90	90	90
+Cave leech	Desperation Abyss	35	64	32	215	107	20	90	90	90
+fallen Angel	Desperation Abyss	434	464	40	20000	1440	80	25	25	255
+Ghost warrior	Desperation Abyss	360	368	30	5000	468	60	300	300	300
+Ghost warrior	Desperation Abyss	341	355	30	5000	468	60	300	300	300
+Ghost warrior	Desperation Abyss	331	340	30	5000	468	60	300	300	300
+Ghost warrior	Desperation Abyss	459	469	30	5000	468	60	300	300	300
+Ghost warrior	Desperation Abyss	428	441	30	5000	468	60	300	300	300
+Ghost warrior	Desperation Abyss	438	461	30	5000	468	60	300	300	300
+gloom hound	Desperation Abyss	257	263	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	264	272	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	228	236	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	245	255	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	234	250	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	259	265	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	229	237	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	264	273	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	242	255	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	243	255	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	232	240	30	5247	316	55	150	150	150
+gloom hound	Desperation Abyss	251	255	30	5247	316	55	150	150	150
+Orc bandit	Desperation Abyss	49	50	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	249	250	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	49	50	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	349	350	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	49	50	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	150	150	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	50	51	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	249	250	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	349	350	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	349	350	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	349	350	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	449	450	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	449	450	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	449	450	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	450	451	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	149	150	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	150	151	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	150	151	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	249	250	10000	780	154	10	25	25	50
+Orc bandit	Desperation Abyss	249	250	10000	780	154	10	25	25	50
+Orc bandit archer	Desperation Abyss	423	424	10000	18	20	10	10	50	50
+Phantom	Desperation Abyss	333	364	30	3500	432	60	180	180	180
+Reaper	Desperation Abyss	434	461	40	7000	612	65	159	159	25
+Shadow	Desperation Abyss	128	137	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	160	167	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	158	164	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	137	156	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	129	138	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	159	166	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	149	155	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	260	268	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	261	271	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	228	238	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	275	279	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	219	224	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	231	239	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	262	272	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	171	179	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	137	142	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	228	234	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	235	239	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	247	254	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	258	264	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	246	251	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	146	160	30	5000	345	48	120	250	250
+Shadow	Desperation Abyss	136	144	30	5000	345	48	120	250	250
+Solid Bin	Desperation Abyss	161	171	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	159	168	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	128	139	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	145	157	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	157	169	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	144	155	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	131	143	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	132	143	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	65	75	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	42	47	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	39	59	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	59	67	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	32	45	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	25	34	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	52	58	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	136	144	30	1500	345	38	50	50	50
+Solid Bin	Desperation Abyss	155	162	30	1500	345	38	50	50	50
+Bandicoot	Moradon	603	620	30	11	10	2	10	10	10
+Bandicoot	Moradon	632	649	30	11	10	2	10	10	10
+Battalion	Moradon	283	300	30	769	233	27	42	75	42
+Battalion	Moradon	305	322	30	769	233	27	42	75	42
+Bulcan	Moradon	535	552	30	99	57	11	26	26	26
+Bulcan	Moradon	535	552	30	99	57	11	26	26	26
+Bulture	Moradon	443	460	30	265	98	19	39	39	39
+Bulture	Moradon	457	474	30	265	98	19	39	39	39
+Dark eyes	Moradon	502	519	30	1193	210	31	46	46	46
+Dark eyes	Moradon	477	494	30	1193	210	31	46	46	46
+Death knight	Moradon	155	172	30	2846	324	45	63	121	63
+Death knight	Moradon	153	170	30	2846	324	45	63	121	63
+Death knight	Moradon	156	173	30	2846	324	45	63	121	63
+Death knight	Moradon	191	208	30	2846	324	45	63	121	63
+Death knight	Moradon	61	63	30	2846	324	45	63	121	63
+Death knight	Moradon	60	61	30	2846	324	45	63	121	63
+Death knight	Moradon	71	73	30	2846	324	45	63	121	63
+Death knight	Moradon	76	77	30	2846	324	45	63	121	63
+Death knight	Moradon	82	84	30	2846	324	45	63	121	63
+Death knight	Moradon	91	93	30	2846	324	45	63	121	63
+Death knight	Moradon	75	76	30	2846	324	45	63	121	63
+Death knight	Moradon	88	89	30	2846	324	45	63	121	63
+Dire wolf	Moradon	549	566	30	1373	224	33	49	49	49
+Dire wolf	Moradon	522	539	30	1373	224	33	49	49	49
+Gavolt	Moradon	577	594	30	190	83	16	34	34	34
+Gavolt	Moradon	566	583	30	190	83	16	34	34	34
+Giant bulcan	Moradon	414	431	30	214	88	17	36	36	36
+Giant bulcan	Moradon	382	399	30	214	88	17	36	36	36
+Giant gavolt	Moradon	534	551	30	238	93	18	38	38	38
+Giant gavolt	Moradon	546	563	30	238	93	18	38	38	38
+Gloomwing	Moradon	464	481	30	512	138	24	38	38	38
+Gloomwing	Moradon	483	500	30	512	138	24	38	38	38
+Glyptodont	Moradon	586	603	30	2206	462	34	50	50	50
+Glyptodont	Moradon	559	576	30	2206	462	34	50	50	50
+Kecoon	Moradon	597	614	30	32	31	6	18	18	18
+Kecoon captain	Moradon	628	645	30	352	138	20	42	42	42
+Kecoon captain	Moradon	658	675	30	352	138	20	42	42	42
+Kecoon warrior	Moradon	602	619	30	190	83	16	34	34	34
+Kecoon warrior	Moradon	627	644	30	190	83	16	34	34	34
+Keilan	Moradon	338	355	30	13420	208	40	32	32	32
+Keilan	Moradon	341	358	30	13420	208	40	32	32	32
+Lard Orc	Moradon	231	232	30	1058	360	50	147	147	77
+Lard Orc	Moradon	239	240	30	1058	360	50	147	147	77
+Lard Orc	Moradon	224	225	30	1058	360	50	147	147	77
+Loup-garou	Moradon	502	519	30	879	155	27	42	42	42
+Loup-garou	Moradon	534	551	30	879	155	27	42	42	42
+Lycan	Moradon	457	474	30	745	144	25	38	38	38
+Lycan	Moradon	479	496	30	745	144	25	38	38	38
+Orc Watcher	Moradon	323	340	30	318	240	30	91	91	49
+Orc Watcher	Moradon	328	345	30	318	240	30	91	91	49
+paralyzer	Moradon	406	423	30	1121	326	32	48	48	48
+paralyzer	Moradon	402	419	30	1121	326	32	48	48	48
+Pincers scorpion	Moradon	409	426	30	970	306	30	45	45	45
+Pincers scorpion	Moradon	408	425	30	970	306	30	45	45	45
+Rotten Eyes	Moradon	348	365	30	970	306	30	45	84	45
+Rotten Eyes	Moradon	351	368	30	970	306	30	45	84	45
+saber tooth	Moradon	797	797	30	1992	236	41	69	69	58
+saber tooth	Moradon	310	327	30	1992	236	41	69	69	58
+saber tooth	Moradon	242	259	30	1992	236	41	69	69	58
+Scavenger Bandicoot	Moradon	590	607	30	40	36	7	19	19	19
+Scavenger Bandicoot	Moradon	615	632	30	40	36	7	19	19	19
+Scorpion	Moradon	403	420	30	709	224	26	40	40	40
+Scorpion	Moradon	394	411	30	709	224	26	40	40	40
+Shadow seeker	Moradon	565	582	30	1028	167	29	44	44	44
+Shadow seeker	Moradon	538	555	30	1028	167	29	44	44	44
+silan	Moradon	415	432	30	705	104	20	22	22	22
+silan	Moradon	385	402	30	705	104	20	22	22	22
+Skeleton	Moradon	112	113	30	1193	210	31	46	86	46
+Skeleton	Moradon	138	139	30	1193	210	31	46	86	46
+Skeleton	Moradon	141	142	30	1193	210	31	46	86	46
+Skeleton	Moradon	140	141	30	1193	210	31	46	86	46
+Skeleton	Moradon	117	118	30	1193	210	31	46	86	46
+Skeleton	Moradon	373	390	30	1193	210	31	46	86	46
+Skeleton	Moradon	349	366	30	1193	210	31	46	86	46
+Skeleton	Moradon	121	122	30	1193	210	31	46	86	46
+Skeleton warrior	Moradon	85	86	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	77	78	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	97	98	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	106	107	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	114	115	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	110	111	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	107	108	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	97	98	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	103	104	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	108	109	30	1373	224	33	49	91	49
+Skeleton warrior	Moradon	94	95	30	1373	224	33	49	91	49
+Smilodon	Moradon	488	505	30	1564	201	37	63	63	54
+Smilodon	Moradon	454	471	30	1564	201	37	63	63	54
+Smilodon	Moradon	52	53	30	1564	201	37	63	63	54
+Smilodon	Moradon	40	41	30	1564	201	37	63	63	54
+Smilodon	Moradon	36	37	30	1564	201	37	63	63	54
+spoiler	Moradon	429	446	30	428	126	22	36	36	36
+spoiler	Moradon	434	451	30	428	126	22	36	36	36
+Stegodon	Moradon	185	202	30	2854	516	38	55	55	55
+undying	Moradon	312	329	30	1202	336	33	49	91	49
+undying	Moradon	287	304	30	1202	336	33	49	91	49
+Werewolf	Moradon	410	427	30	625	132	23	36	36	36
+Werewolf	Moradon	385	402	30	625	132	23	36	36	36
+Wild bulcan	Moradon	506	523	30	131	67	13	30	30	30
+Wild bulcan	Moradon	502	519	30	131	67	13	30	30	30
+Wild smilodon	Moradon	315	316	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	326	327	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	340	341	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	349	350	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	360	361	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	369	370	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	452	469	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	478	495	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	290	291	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	298	299	30	1769	212	39	67	67	56
+Wild smilodon	Moradon	309	310	30	1769	212	39	67	67	56
+Worm	Moradon	624	641	30	7	5	1	9	9	9
+Worm	Moradon	637	654	30	7	5	1	9	9	9
+Worm	Moradon	657	657	30	7	5	1	9	9	9
+Worm	Moradon	653	655	30	7	5	1	9	9	9
+Worm	Moradon	649	649	30	7	5	1	9	9	9
+[Quest] Apostle	Karus Eslant	864	870	150	120233	5000	150	170	170	170
+[Quest] Giant golem	El Morad Eslant	105	113	150	120533	3628	160	1200	1200	1200
+[Quest] Lard Orc	El Morad Eslant	508	520	150	120233	5000	150	170	170	170
+[Quest] Stone Golem	Karus Eslant	96	102	150	120233	5000	150	170	170	170
+[Quest] Troll Berserker	Karus Eslant	783	790	150	120233	5000	150	170	170	170
+[Quest] Troll Captain	El Morad Eslant	757	768	150	120533	3628	160	1200	1200	1200
+[Quest] Uruk Hai	Karus Eslant	388	393	150	120233	5000	150	170	170	170
+[Quest] Uruk Tron	El Morad Eslant	701	713	150	120533	3628	160	1200	1200	1200
+Apostle	El Morad Eslant	575	620	30	21556	315	70	200	200	200
+Apostle	Karus Eslant	573	616	30	21556	315	70	200	200	200
+Apostle of Flames	El Morad Eslant	784	829	50	46556	1000	70	100	100	100
+Apostle of Flames	El Morad Eslant	861	907	50	46556	1000	70	100	100	100
+Apostle of Flames	Karus Eslant	804	849	50	46556	1000	70	100	100	100
+Apostle of Flames	Karus Eslant	867	911	50	46556	1000	70	100	100	100
+Apostle of Piercing Cold	El Morad Eslant	613	657	50	42556	1000	70	100	100	100
+Apostle of Piercing Cold	El Morad Eslant	680	719	50	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Karus Eslant	607	658	50	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Karus Eslant	675	718	50	42556	1000	70	100	100	100
+Balrog	El Morad Eslant	929	940	60	81775	2000	100	120	120	120
+Balrog	El Morad Eslant	894	907	60	81775	2000	100	120	120	120
+Balrog	Karus Eslant	944	952	60	81775	2000	100	120	120	120
+Balrog	Karus Eslant	934	942	60	81775	2000	100	120	120	120
+Balrog	Karus Eslant	929	938	60	81775	2000	100	120	120	120
+Balrog	Karus Eslant	952	962	60	81775	2000	100	120	120	120
+Balrog	El Morad Eslant	940	951	60	81775	2000	100	120	120	120
+Balrog	El Morad Eslant	926	938	60	81775	2000	100	120	120	120
+Bearded Ruminant	El Morad Eslant	784	793	60	55005	2115	110	150	150	150
+Bearded Ruminant	El Morad Eslant	811	822	60	55005	2115	110	150	150	150
+Bearded Ruminant	El Morad Eslant	848	860	60	55005	2115	110	150	150	150
+Bearded Ruminant	El Morad Eslant	881	891	60	55005	2115	110	150	150	150
+Bearded Ruminant	Karus Eslant	795	806	60	55005	2115	110	150	150	150
+Bearded Ruminant	Karus Eslant	828	840	60	55005	2115	110	150	150	150
+Bearded Ruminant	Karus Eslant	870	882	60	55005	2115	110	150	150	150
+Bearded Ruminant	Karus Eslant	894	906	60	55005	2115	110	150	150	150
+Brahman	El Morad Eslant	594	633	30	38190	432	80	28	25	255
+Brahman	El Morad Eslant	593	638	30	38190	432	80	28	25	255
+Brahman	Karus Eslant	599	644	30	38190	432	80	28	25	255
+Brahman	Karus Eslant	591	636	30	38190	432	80	28	25	255
+Crimson Wing	El Morad Eslant	113	168	60	43835	810	90	200	200	154
+Crimson Wing	El Morad Eslant	398	429	60	43835	810	90	200	200	154
+Crimson Wing	El Morad Eslant	375	416	60	43835	810	90	200	200	154
+Crimson Wing	El Morad Eslant	105	138	60	43835	810	90	200	200	154
+Crimson Wing	Karus Eslant	396	425	60	43835	810	90	200	200	154
+Crimson Wing	Karus Eslant	358	412	60	43835	810	90	200	200	154
+Crimson Wing	Karus Eslant	116	168	60	43835	810	90	200	200	154
+Crimson Wing	Karus Eslant	105	139	60	43835	810	90	200	200	154
+Dark Knight	El Morad Eslant	382	409	50	88014	535	70	50	50	300
+Dark Knight	El Morad Eslant	79	128	50	88014	535	70	50	50	300
+Dark Knight	El Morad Eslant	67	123	50	88014	535	70	50	50	300
+Dark Knight	El Morad Eslant	311	370	50	88014	535	70	50	50	300
+Dark Knight	Karus Eslant	92	134	50	88014	535	70	50	50	300
+Dark Knight	Karus Eslant	352	399	50	88014	535	70	50	50	300
+Dark Knight	Karus Eslant	84	123	50	88014	535	70	50	50	300
+Dark Knight	Karus Eslant	290	338	50	88014	535	70	50	50	300
+Dark stone	El Morad Eslant	77	120	60	17000	1600	120	25	25	255
+Dark stone	El Morad Eslant	149	200	60	17000	1600	120	25	25	255
+Dark stone	El Morad Eslant	157	180	30	17000	1600	120	25	25	255
+Dark stone	Karus Eslant	76	115	30	17000	1600	120	25	25	255
+Dark stone	Karus Eslant	123	173	30	17000	1600	120	25	25	255
+Deruvish founder	El Morad Eslant	837	930	32000	150000	900	100	25	25	255
+Deruvish founder	El Morad Eslant	566	892	32000	150000	900	100	25	25	255
+Deruvish founder	El Morad Eslant	757	859	32000	150000	900	100	25	25	255
+Deruvish founder	El Morad Eslant	583	658	32000	150000	900	100	25	25	255
+Deruvish founder	El Morad Eslant	231	273	32000	150000	900	100	25	25	255
+Deruvish founder	El Morad Eslant	217	238	32000	150000	900	100	25	25	255
+Deruvish founder	Karus Eslant	231	273	32000	150000	900	100	25	25	255
+Deruvish founder	Karus Eslant	837	930	32000	150000	900	100	25	25	255
+Deruvish founder	Karus Eslant	217	238	32000	150000	900	100	25	25	255
+Deruvish founder	Karus Eslant	583	658	32000	150000	900	100	25	25	255
+Deruvish founder	Karus Eslant	566	892	32000	150000	900	100	25	25	255
+Deruvish founder	Karus Eslant	757	859	32000	150000	900	100	25	25	255
+Doom Soldier	El Morad Eslant	255	287	30	45845	500	70	120	120	100
+Doom Soldier	El Morad Eslant	332	382	30	45845	500	70	120	120	100
+Doom Soldier	Karus Eslant	331	378	30	45845	500	70	120	120	100
+Doom Soldier	Karus Eslant	270	304	35	45845	500	70	120	120	100
+Dragon tooth	El Morad Eslant	782	834	32000	76380	1152	80	25	25	255
+Dragon tooth	El Morad Eslant	164	202	32000	76380	1152	80	25	25	255
+Dragon tooth	El Morad Eslant	112	149	32000	76380	1152	80	25	25	255
+Dragon tooth	El Morad Eslant	640	708	32000	76380	1152	80	25	25	255
+Dragon tooth	Karus Eslant	164	202	32000	76380	1152	80	500	500	500
+Dragon tooth	Karus Eslant	782	834	32000	76380	1152	80	500	500	500
+Dragon tooth	Karus Eslant	112	149	32000	76380	1152	80	500	500	500
+Dragon tooth	Karus Eslant	640	708	32000	76380	1152	80	500	500	500
+Dragon Tooth commander	El Morad Eslant	425	469	45	10557	501	68	70	500	130
+Dragon Tooth commander	Karus Eslant	412	479	45	10557	501	68	70	500	130
+Falcon	El Morad Eslant	122	158	60	66460	990	100	250	250	154
+Falcon	El Morad Eslant	217	266	60	66460	990	100	250	250	154
+Falcon	El Morad Eslant	274	324	60	66460	990	100	250	250	154
+Falcon	Karus Eslant	125	157	60	66460	990	100	250	250	154
+Falcon	Karus Eslant	181	227	60	66460	990	100	250	250	154
+Falcon	Karus Eslant	281	321	60	66460	990	100	250	250	154
+Falcon	Karus Eslant	227	243	60	66460	990	100	250	250	154
+Gagoil	El Morad Eslant	228	286	40	43457	1250	70	150	150	150
+Gagoil	Karus Eslant	228	289	40	43457	1250	70	150	150	150
+Giant golem	El Morad Eslant	830	882	30	14000	990	110	25	25	255
+Giant golem	El Morad Eslant	766	810	25	14000	990	110	25	25	255
+Giant golem	Karus Eslant	806	843	25	14000	990	110	25	25	255
+Giant golem	Karus Eslant	865	902	30	14000	990	110	25	25	255
+Harpy	El Morad Eslant	420	458	30	16167	529	70	50	50	50
+Harpy	Karus Eslant	432	483	40	16167	529	70	50	50	50
+Harpy Queen	El Morad Eslant	848	932	32000	179998	1188	110	25	25	154
+Harpy Queen	El Morad Eslant	106	130	32000	179998	1188	110	25	25	154
+Harpy Queen	El Morad Eslant	118	168	32000	179998	1188	110	25	25	154
+Harpy Queen	El Morad Eslant	562	623	32000	179998	1188	110	25	25	154
+Harpy Queen	Karus Eslant	848	932	32000	179998	1188	110	25	25	154
+Harpy Queen	Karus Eslant	118	168	32000	179998	1188	110	25	25	154
+Harpy Queen	Karus Eslant	562	623	32000	179998	1188	110	25	25	154
+Harpy Queen	Karus Eslant	106	130	32000	179998	1188	110	25	25	154
+Paramun	El Morad Eslant	724	789	30	62622	567	90	25	25	255
+Paramun	El Morad Eslant	661	705	30	62622	567	90	25	25	255
+Paramun	Karus Eslant	737	789	30	62622	567	90	25	25	255
+Paramun	Karus Eslant	660	704	30	62622	567	90	25	25	255
+Raven Harpy	El Morad Eslant	333	369	60	27496	648	80	150	150	154
+Raven Harpy	El Morad Eslant	398	436	50	27496	648	80	150	150	154
+Raven Harpy	El Morad Eslant	392	430	60	27496	648	80	150	150	154
+Raven Harpy	El Morad Eslant	246	303	60	27496	648	80	150	150	154
+Raven Harpy	Karus Eslant	391	432	60	27496	648	80	150	150	154
+Raven Harpy	Karus Eslant	316	365	60	27496	648	80	150	150	154
+Raven Harpy	Karus Eslant	388	430	50	27496	648	80	150	150	154
+Raven Harpy	Karus Eslant	237	289	60	27496	648	80	150	150	154
+Samma	El Morad Eslant	109	132	32000	104370	1296	90	500	500	500
+Samma	El Morad Eslant	660	804	32000	104370	1296	90	500	500	500
+Samma	El Morad Eslant	851	889	32000	104370	1296	90	500	500	500
+Samma	El Morad Eslant	97	131	32000	104370	1296	90	500	500	500
+Samma	Karus Eslant	109	132	32000	104370	1296	90	500	500	500
+Samma	Karus Eslant	660	804	32000	104370	1296	90	500	500	500
+Samma	Karus Eslant	851	889	32000	104370	1296	90	500	500	500
+Samma	Karus Eslant	97	131	32000	104370	1296	90	500	500	500
+Shaula	El Morad Eslant	860	957	32000	64485	1080	75	500	500	500
+Shaula	El Morad Eslant	151	201	32000	64485	1080	75	500	500	500
+Shaula	El Morad Eslant	88	121	32000	64485	1080	75	500	500	500
+Shaula	El Morad Eslant	820	869	32000	64485	1080	75	500	500	500
+Shaula	Karus Eslant	860	957	32000	64485	1080	75	25	25	25
+Shaula	Karus Eslant	88	121	32000	64485	1080	75	25	25	25
+Shaula	Karus Eslant	151	201	32000	64485	1080	75	25	25	25
+Shaula	Karus Eslant	820	869	32000	64485	1080	75	25	25	25
+Snake Queen	El Morad Eslant	776	838	32000	150000	1350	100	25	25	255
+Snake Queen	El Morad Eslant	871	934	32000	150000	1350	100	25	25	255
+Snake Queen	El Morad Eslant	202	232	32000	150000	1350	100	25	25	255
+Snake Queen	El Morad Eslant	113	179	32000	150000	1350	100	25	25	255
+Snake Queen	El Morad Eslant	135	180	32000	150000	1350	100	25	25	255
+Snake Queen	El Morad Eslant	237	326	32000	150000	1350	100	25	25	255
+Snake Queen	El Morad Eslant	637	685	32000	150000	1350	100	25	25	255
+Snake Queen	El Morad Eslant	810	901	32000	150000	1350	100	25	25	255
+Snake Queen	Karus Eslant	202	232	32000	150000	1350	100	25	25	255
+Snake Queen	Karus Eslant	776	838	32000	150000	1350	100	25	25	255
+Snake Queen	Karus Eslant	237	326	32000	150000	1350	100	25	25	255
+Snake Queen	Karus Eslant	637	685	32000	150000	1350	100	25	25	255
+Snake Queen	Karus Eslant	113	179	32000	150000	1350	100	25	25	255
+Snake Queen	Karus Eslant	871	934	32000	150000	1350	100	25	25	255
+Snake Queen	Karus Eslant	810	901	32000	150000	1350	100	25	25	255
+Snake Queen	Karus Eslant	135	180	32000	150000	1350	100	25	25	255
+Stone golem	El Morad Eslant	170	194	30	11000	720	100	200	200	200
+Stone golem	El Morad Eslant	223	254	25	11000	720	100	200	200	200
+Stone golem	El Morad Eslant	218	254	30	11000	720	100	200	200	200
+Stone golem	Karus Eslant	198	246	30	11000	720	100	200	200	200
+Stone golem	Karus Eslant	170	194	30	11000	720	100	200	200	200
+Stone golem	Karus Eslant	222	237	25	11000	720	100	200	200	200
+Talos	Karus Eslant	399	412	32000	220000	2016	140	28	25	255
+Talos	Karus Eslant	761	818	32000	220000	2016	140	28	25	255
+Talos	Karus Eslant	862	892	32000	220000	2016	140	28	25	255
+Talos	Karus Eslant	176	240	32000	220000	2016	140	28	25	255
+Talos	Karus Eslant	668	887	32000	220000	2016	140	28	25	255
+Talos	Karus Eslant	86	114	32000	220000	2016	140	28	25	255
+Talos	Karus Eslant	133	152	32000	220000	2016	140	28	25	255
+Talos	Karus Eslant	144	169	32000	220000	2016	140	28	25	255
+Talos	El Morad Eslant	144	169	32000	220000	2016	140	25	25	255
+Talos	El Morad Eslant	399	412	32000	220000	2016	140	25	25	255
+Talos	El Morad Eslant	761	818	32000	220000	2016	140	25	25	255
+Talos	El Morad Eslant	862	892	32000	220000	2016	140	25	25	255
+Talos	El Morad Eslant	176	240	32000	220000	2016	140	25	25	255
+Talos	El Morad Eslant	86	114	32000	220000	2016	140	25	25	255
+Talos	El Morad Eslant	668	887	32000	220000	2016	140	25	25	255
+Talos	El Morad Eslant	133	152	32000	220000	2016	140	25	25	255
+Titan	El Morad Eslant	856	907	60	20000	1638	130	25	25	255
+Titan	El Morad Eslant	849	903	60	20000	1638	130	25	25	255
+Titan	Karus Eslant	856	906	30	20000	1638	130	25	25	255
+Titan	Karus Eslant	853	910	35	20000	1638	130	25	25	255
+Troll	El Morad Eslant	562	622	30	21556	315	70	56	56	56
+Troll	Karus Eslant	565	625	45	21556	315	70	56	56	56
+Troll Berserker	El Morad Eslant	742	808	50	41748	405	90	56	56	56
+Troll Berserker	El Morad Eslant	832	897	50	41748	405	90	56	56	56
+Troll Berserker	Karus Eslant	771	828	50	41748	405	90	56	56	56
+Troll Berserker	Karus Eslant	838	901	50	41748	405	90	56	56	56
+Troll Captain	El Morad Eslant	601	631	55	55384	450	100	56	56	56
+Troll Captain	El Morad Eslant	677	733	55	55384	450	100	56	56	56
+Troll Captain	El Morad Eslant	708	765	55	55384	450	100	56	56	56
+Troll Captain	Karus Eslant	701	758	60	55384	450	100	56	56	56
+Troll Captain	Karus Eslant	743	810	60	55384	450	100	56	56	56
+Troll King	El Morad Eslant	704	744	32000	233025	1490	110	1000	1000	56
+Troll King	El Morad Eslant	107	135	32000	233025	1490	110	1000	1000	56
+Troll King	El Morad Eslant	865	890	32000	233025	1490	110	1000	1000	56
+Troll King	El Morad Eslant	838	875	32000	233025	1490	110	1000	1000	56
+Troll King	El Morad Eslant	85	143	32000	233025	1490	110	1000	1000	56
+Troll King	El Morad Eslant	850	904	32000	233025	1490	110	1000	1000	56
+Troll King	Karus Eslant	838	875	32000	233025	1490	110	1000	1000	56
+Troll King	Karus Eslant	85	143	32000	233025	1490	110	1000	1000	56
+Troll King	Karus Eslant	107	129	32000	233025	1490	110	1000	1000	56
+Troll King	Karus Eslant	850	904	32000	233025	1490	110	1000	1000	56
+Troll King	Karus Eslant	865	890	32000	233025	1490	110	1000	1000	56
+Troll King	Karus Eslant	711	741	32000	233025	1490	110	1000	1000	56
+Troll Shaman	El Morad Eslant	678	741	50	49867	1325	70	100	100	100
+Troll Shaman	El Morad Eslant	715	774	50	49867	1325	70	100	100	100
+Troll Shaman	Karus Eslant	694	751	60	49867	1325	70	100	100	100
+Troll Shaman	Karus Eslant	666	751	60	49867	1325	70	100	100	100
+Troll Warrior	El Morad Eslant	543	600	50	38190	360	80	56	56	56
+Troll Warrior	El Morad Eslant	563	617	60	38190	360	80	56	56	56
+Troll Warrior	El Morad Eslant	602	661	50	38190	360	80	56	56	56
+Troll Warrior	Karus Eslant	564	627	50	38190	360	80	56	56	56
+Troll Warrior	Karus Eslant	542	607	50	38190	360	80	56	56	56
+Troll Warrior	Karus Eslant	619	683	60	38190	360	80	56	56	56
+Ancient	Luferson Castle	1207	1234	30	3577	315	50	75	150	120
+Ancient	Luferson Castle	1252	1276	30	3577	315	50	75	150	120
+Ancient	Luferson Castle	1244	1268	30	3577	315	50	75	150	120
+Antares	Luferson Castle	724	815	32000	23010	720	50	25	25	25
+Antares	Luferson Castle	653	733	32000	23010	720	50	25	25	25
+Antares	Luferson Castle	259	356	32000	23010	720	50	25	25	25
+Antares	Luferson Castle	840	894	32000	23010	720	50	25	25	25
+Antares	Luferson Castle	1541	1599	32000	23010	720	50	25	25	25
+Ape	Luferson Castle	178	199	30	3255	412	42	105	105	105
+Ape	Luferson Castle	218	240	30	3255	412	42	105	105	105
+Ape	Luferson Castle	236	260	30	3255	412	42	105	105	105
+Ape	Luferson Castle	1055	1090	30	3255	412	42	105	105	105
+Ape	Luferson Castle	766	789	30	3255	412	42	105	105	105
+Apostle	Luferson Castle	1529	1536	45	21556	315	70	200	200	200
+Apostle	Luferson Castle	1559	1566	45	21556	315	70	200	200	200
+Apostle	Luferson Castle	1469	1476	45	21556	315	70	200	200	200
+Ash knight	Luferson Castle	1508	1539	30	4664	396	55	76	146	76
+Ash knight	Luferson Castle	1430	1460	35	4664	396	55	76	146	76
+Ash knight	Luferson Castle	1249	1299	30	4664	396	55	76	146	76
+Ash knight	Luferson Castle	1307	1345	35	4664	396	55	76	146	76
+Baron	Luferson Castle	565	598	33	4056	374	52	86	73	73
+Baron	Luferson Castle	631	668	33	4056	374	52	86	73	73
+Battalion	Luferson Castle	1017	1031	30	769	233	27	42	75	42
+Battalion	Luferson Castle	1046	1061	30	769	233	27	42	75	42
+Blood Don	Luferson Castle	296	321	30	15211	299	70	100	100	100
+Blood Don	Luferson Castle	299	326	35	15211	299	70	100	100	100
+BUGBEAR	Luferson Castle	263	275	30	687	204	35	116	116	116
+BUGBEAR	Luferson Castle	289	299	30	687	204	35	116	116	116
+BUGBEAR	Luferson Castle	325	338	30	687	204	35	116	116	116
+BUGBEAR	Luferson Castle	235	244	30	687	204	35	116	116	116
+BUGBEAR	Luferson Castle	324	336	30	687	204	35	116	116	116
+BUGBEAR	Luferson Castle	366	377	30	687	204	35	116	116	116
+BUGBEAR	Luferson Castle	260	271	30	687	204	35	116	116	116
+BUGBEAR	Luferson Castle	286	297	30	687	204	35	116	116	116
+BUGBEAR	Luferson Castle	358	367	30	687	204	35	116	116	116
+burning skeleton	Luferson Castle	961	1059	45	4000	410	57	79	79	79
+burning skeleton	Luferson Castle	1140	1238	45	4000	410	57	79	79	79
+Cardinal	Luferson Castle	581	619	33	4455	388	54	88	75	75
+Cardinal	Luferson Castle	640	688	33	4455	388	54	88	75	75
+Centaur	Luferson Castle	1870	1891	60	19204	1134	90	455	655	455
+Centaur	Luferson Castle	1921	1949	60	19204	1134	90	455	655	455
+Centaur	Luferson Castle	1833	1855	60	19204	1134	90	455	655	455
+Dark eyes	Luferson Castle	639	663	25	1193	210	31	46	46	46
+Dark eyes	Luferson Castle	674	698	30	1193	210	31	46	46	46
+Death knight	Luferson Castle	674	716	30	2846	324	45	63	121	63
+Death knight	Luferson Castle	1224	1245	30	2846	324	45	63	121	63
+Death knight	Luferson Castle	1190	1215	30	2846	324	45	63	121	63
+Death knight	Luferson Castle	1172	1200	30	2846	324	45	63	121	63
+Death knight	Luferson Castle	1138	1169	30	2846	324	45	63	121	63
+Decayed Zombie	Luferson Castle	1009	1023	30	598	207	24	38	68	38
+Decayed Zombie	Luferson Castle	990	1005	30	598	207	24	38	68	38
+Decayed Zombie	Luferson Castle	987	998	30	598	207	24	38	68	38
+Deruvish	Luferson Castle	1440	1447	30	10890	216	60	140	140	140
+Deruvish	Luferson Castle	1546	1553	30	10890	216	60	140	140	140
+Dire wolf	Luferson Castle	559	582	25	1373	224	33	49	49	49
+Dire wolf	Luferson Castle	589	613	30	1373	224	33	49	49	49
+Dire wolf	Luferson Castle	663	696	25	1373	224	33	49	49	49
+Dire wolf	Luferson Castle	670	708	30	1373	224	33	49	49	49
+Dragon Knight	Luferson Castle	891	931	35	3846	486	50	63	500	63
+Dragon Knight	Luferson Castle	1717	1739	35	3846	486	50	63	500	63
+Dragon Knight	Luferson Castle	952	994	30	3846	486	50	63	500	63
+Dragon Knight	Luferson Castle	1644	1673	30	3846	486	50	63	500	63
+Dragon Tooth commander	Luferson Castle	1131	1177	30	10557	501	68	70	500	130
+Dragon Tooth commander	Luferson Castle	1173	1247	35	10557	501	68	70	500	130
+Dragon Tooth commander	Luferson Castle	1712	1774	30	10557	501	68	70	500	130
+Dragon Tooth commander	Luferson Castle	1745	1781	35	10557	501	68	70	500	130
+Dragon Tooth Skeleton	Luferson Castle	910	962	30	7123	468	65	88	171	88
+Dragon Tooth Skeleton	Luferson Castle	803	868	35	7123	468	65	88	171	88
+Dragon Tooth Skeleton	Luferson Castle	661	709	30	7123	468	65	88	171	88
+Dragon Tooth Skeleton	Luferson Castle	584	629	35	7123	468	65	88	171	88
+Dragon Tooth soldier	Luferson Castle	854	904	30	5824	417	58	76	500	76
+Dragon Tooth soldier	Luferson Castle	957	1009	35	5824	417	58	76	500	76
+Dragon Tooth soldier	Luferson Castle	1513	1547	35	5824	417	58	76	500	76
+Dragon Tooth soldier	Luferson Castle	1487	1527	30	5824	417	58	76	500	76
+Dusk Orc	Luferson Castle	714	738	25	617	288	40	119	119	63
+Dusk Orc	Luferson Castle	745	767	30	617	288	40	119	119	63
+Dusk Orc	Luferson Castle	774	797	25	617	288	40	119	119	63
+Dusk Orc	Luferson Castle	803	824	30	617	288	40	119	119	63
+Flame Rock	Luferson Castle	1860	1949	3600	16615	720	100	25	25	25
+Flame Rock	Luferson Castle	1906	1941	3600	16615	720	100	25	25	25
+Garuna	Luferson Castle	1496	1523	23	5316	572	53	74	74	74
+Garuna	Luferson Castle	1554	1585	30	5316	572	53	74	74	74
+Garuna	Luferson Castle	1503	1536	30	5316	572	53	74	74	74
+Giant golem	Luferson Castle	1895	1916	25	14000	990	110	25	25	255
+Giant golem	Luferson Castle	1915	1943	30	14000	990	110	25	25	255
+Giant golem	Luferson Castle	1904	1934	30	14000	990	110	25	25	255
+Glyptodont	Luferson Castle	641	691	30	2206	462	34	50	50	50
+Glyptodont	Luferson Castle	616	672	30	2206	462	34	50	50	50
+GOBLIN bouncer	Luferson Castle	316	326	30	1601	303	45	130	130	130
+GOBLIN bouncer	Luferson Castle	288	300	30	1601	303	45	130	130	130
+GRAY OOZY	Luferson Castle	418	445	30	4077	345	40	38	38	38
+GRAY OOZY	Luferson Castle	455	480	25	4077	345	40	38	38	38
+GRAY OOZY	Luferson Castle	431	477	35	4077	345	40	38	38	38
+GRELL	Luferson Castle	243	264	30	4885	387	60	154	154	154
+GRELL	Luferson Castle	259	277	30	4885	387	60	154	154	154
+GRELL	Luferson Castle	207	227	30	4885	387	60	154	154	154
+GRELL	Luferson Castle	176	192	30	4885	387	60	154	154	154
+GRELL	Luferson Castle	194	213	30	4885	387	60	154	154	154
+Harpy	Luferson Castle	1628	1647	60	16167	529	70	50	50	50
+Harpy	Luferson Castle	1833	1850	60	16167	529	70	50	50	50
+Harpy	Luferson Castle	1907	1925	60	16167	529	70	50	50	50
+Harpy	Luferson Castle	1837	1856	60	16167	529	70	50	50	50
+Harpy	Luferson Castle	1907	1927	60	16167	529	70	50	50	50
+Harpy	Luferson Castle	1730	1746	60	16167	529	70	50	50	50
+Haunga	Luferson Castle	1271	1302	20	5831	594	55	76	76	76
+Haunga	Luferson Castle	1395	1436	20	5831	594	55	76	76	76
+Haunga	Luferson Castle	1512	1539	15	5831	594	55	76	76	76
+Haunga	Luferson Castle	1286	1320	15	5831	594	55	76	76	76
+Haunga	Luferson Castle	1517	1542	15	5831	594	55	76	76	76
+Haunga Warrior	Luferson Castle	1177	1212	30	7260	648	60	2000	2000	2000
+Haunga Warrior	Luferson Castle	1104	1139	30	7260	648	60	2000	2000	2000
+Haunga Warrior	Luferson Castle	996	1034	30	7260	648	60	2000	2000	2000
+Haunga Warrior	Luferson Castle	1228	1277	30	7260	648	60	2000	2000	2000
+Hell hound	Luferson Castle	114	136	45	10000	299	52	2000	2000	2000
+Hell hound	Luferson Castle	159	183	45	10000	299	52	2000	2000	2000
+Hell hound	Luferson Castle	109	136	45	10000	299	52	2000	2000	2000
+Hell hound	Luferson Castle	147	173	45	10000	299	52	2000	2000	2000
+Hell hound	Luferson Castle	103	126	45	10000	299	52	2000	2000	2000
+HORNET	Luferson Castle	1052	1088	30	3998	300	45	50	50	130
+HORNET	Luferson Castle	1383	1403	30	3998	300	45	50	50	130
+HORNET	Luferson Castle	1381	1399	30	3998	300	45	50	50	130
+HORNET	Luferson Castle	1380	1396	30	3998	300	45	50	50	130
+HORNET	Luferson Castle	1378	1396	30	3998	300	45	50	50	130
+HORNET	Luferson Castle	1107	1155	30	3998	300	45	50	50	130
+HORNET	Luferson Castle	1387	1404	30	3998	300	45	50	50	130
+Hyde	Luferson Castle	1782	1834	32000	17790	648	45	25	25	255
+Hyde	Luferson Castle	1002	1064	32000	17790	648	45	25	25	255
+Hyde	Luferson Castle	910	1010	32000	17790	648	45	25	25	255
+Hyde	Luferson Castle	626	694	32000	17790	648	45	25	25	255
+Hyde	Luferson Castle	1197	1238	32000	17790	648	45	25	25	255
+Keilan	Luferson Castle	722	750	25	13420	208	40	32	32	32
+Keilan	Luferson Castle	757	788	30	13420	208	40	32	32	32
+Keilan	Luferson Castle	777	807	25	13420	208	40	32	32	32
+Keilan	Luferson Castle	739	786	30	13420	208	40	32	32	32
+KOBOLD	Luferson Castle	352	363	30	415	162	30	109	109	109
+KOBOLD	Luferson Castle	367	376	30	415	162	30	109	109	109
+KOBOLD	Luferson Castle	268	278	30	415	162	30	109	109	109
+KOBOLD	Luferson Castle	251	260	30	415	162	30	109	109	109
+KOBOLD	Luferson Castle	240	249	30	415	162	30	109	109	109
+KOBOLD	Luferson Castle	386	398	30	415	162	30	109	109	109
+Kongau	Luferson Castle	1293	1307	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1213	1248	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1192	1225	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1248	1279	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1280	1296	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1128	1188	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1427	1452	23	4378	529	49	69	69	69
+Kongau	Luferson Castle	1368	1401	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1376	1400	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1299	1352	23	4378	529	49	69	69	69
+Kongau	Luferson Castle	1111	1148	30	4378	529	49	69	69	69
+Kongau	Luferson Castle	1076	1097	30	4378	529	49	69	69	69
+Laird	Luferson Castle	722	753	30	3681	360	50	84	70	70
+Laird	Luferson Castle	783	832	30	3681	360	50	84	70	70
+Lamia	Luferson Castle	1405	1433	30	2904	432	60	20	200	200
+Lamia	Luferson Castle	1384	1419	30	2904	432	60	20	200	200
+Lard Orc	Luferson Castle	410	440	30	1058	360	50	147	147	77
+Lard Orc	Luferson Castle	440	472	30	1058	360	50	147	147	77
+LICH	Luferson Castle	627	647	30	8557	477	70	70	70	130
+LICH	Luferson Castle	690	712	30	8557	477	70	70	70	130
+LICH	Luferson Castle	716	738	30	8557	477	70	70	70	130
+Loup-garou	Luferson Castle	519	540	25	879	155	27	42	42	42
+Loup-garou	Luferson Castle	534	562	30	879	155	27	42	42	42
+Loup-garou	Luferson Castle	574	595	25	879	155	27	42	42	42
+Loup-garou	Luferson Castle	599	625	30	879	155	27	42	42	42
+Lycan	Luferson Castle	458	478	25	745	144	25	38	38	38
+Lycan	Luferson Castle	485	510	30	745	144	25	38	38	38
+Lycan	Luferson Castle	598	618	25	745	144	25	38	38	38
+Lycan	Luferson Castle	571	589	30	745	144	25	38	38	38
+Machirodus	Luferson Castle	285	336	23	2232	247	43	72	72	61
+Machirodus	Luferson Castle	350	388	30	2232	247	43	72	72	61
+Machirodus	Luferson Castle	238	273	23	2232	247	43	72	72	61
+Manticore	Luferson Castle	1413	1469	60	12551	994	85	25	25	255
+Manticore	Luferson Castle	1594	1666	60	12551	994	85	25	25	255
+Manticore	Luferson Castle	1602	1649	60	12551	994	85	25	25	255
+Mastodon	Luferson Castle	790	840	25	3220	576	40	58	58	58
+Mastodon	Luferson Castle	570	615	25	3220	576	40	58	58	58
+Meganthereon	Luferson Castle	169	213	30	2490	259	45	75	75	63
+Meganthereon	Luferson Castle	121	150	30	2490	259	45	75	75	63
+Megarodon	Luferson Castle	784	847	25	3616	604	42	114	114	61
+Orc Watcher	Luferson Castle	620	653	30	318	240	30	91	91	49
+Orc Watcher	Luferson Castle	595	616	25	318	240	30	91	91	49
+paralyzer	Luferson Castle	841	862	30	1121	326	32	48	48	48
+Paralyzer	Luferson Castle	813	835	25	1121	326	32	48	48	48
+Pincers scorpion	Luferson Castle	720	752	30	970	306	30	45	45	45
+Pincers scorpion	Luferson Castle	747	779	30	970	306	30	45	45	45
+POOKA	Luferson Castle	313	324	30	1073	252	40	123	123	123
+POOKA	Luferson Castle	338	349	30	1073	252	40	123	123	123
+POOKA	Luferson Castle	248	259	30	1073	252	40	123	123	123
+POOKA	Luferson Castle	283	293	30	1073	252	40	123	123	123
+Raven Harpy	Luferson Castle	1704	1729	35	27496	648	80	150	150	154
+Raven Harpy	Luferson Castle	1798	1832	60	27496	648	80	150	150	154
+Raven Harpy	Luferson Castle	1870	1893	60	27496	648	80	150	150	154
+Raven Harpy	Luferson Castle	1641	1658	60	27496	648	80	150	150	154
+Rotten Eyes	Luferson Castle	961	975	30	970	306	30	45	84	45
+Rotten Eyes	Luferson Castle	987	1001	30	970	306	30	45	84	45
+saber tooth	Luferson Castle	500	566	23	1992	236	41	69	69	58
+saber tooth	Luferson Castle	317	361	23	1992	236	41	69	69	58
+saber tooth	Luferson Castle	364	404	30	1992	236	41	69	69	58
+saber tooth	Luferson Castle	1237	1263	30	1992	236	41	69	69	58
+saber tooth	Luferson Castle	805	836	25	1992	236	41	69	69	58
+saber tooth	Luferson Castle	870	895	25	1992	236	41	69	69	58
+saber tooth	Luferson Castle	880	909	30	1992	236	41	69	69	58
+saber tooth	Luferson Castle	842	863	30	1992	236	41	69	69	58
+Scolar	Luferson Castle	1090	1109	30	3002	331	46	76	66	66
+Scolar	Luferson Castle	537	571	33	3002	331	46	76	66	66
+Scolar	Luferson Castle	529	568	33	3002	331	46	76	66	66
+Scolar	Luferson Castle	657	694	33	3002	331	46	76	66	66
+Scorpion	Luferson Castle	634	658	25	709	224	26	40	40	40
+Scorpion	Luferson Castle	666	690	30	709	224	26	40	40	40
+scouting soldier	Luferson Castle	811	820	300	3000	500	30	400	400	400
+Shadow seeker	Luferson Castle	909	926	30	1028	167	29	44	44	44
+Shadow seeker	Luferson Castle	939	949	30	1028	167	29	44	44	44
+Shadow seeker	Luferson Castle	923	939	30	1028	167	29	44	44	44
+Sheriff	Luferson Castle	1210	1254	30	3330	345	48	80	68	68
+Skeleton	Luferson Castle	649	675	25	1193	210	31	46	86	46
+Skeleton	Luferson Castle	612	642	30	1193	210	31	46	86	46
+Skeleton	Luferson Castle	556	588	25	1193	210	31	46	86	46
+Skeleton	Luferson Castle	557	593	30	1193	210	31	46	86	46
+Skeleton champion	Luferson Castle	662	695	25	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	662	706	30	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	1019	1044	25	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	1005	1039	30	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	976	1001	25	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	965	997	30	1787	251	37	54	100	54
+Skeleton knight	Luferson Castle	588	618	25	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	627	659	30	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	901	911	30	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	929	943	25	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	899	915	35	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	951	972	30	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	980	1001	25	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	959	987	30	1572	238	35	51	96	51
+Shadow seeker	Luferson Castle	909	926	30	1028	167	29	44	44	44
+Shadow seeker	Luferson Castle	939	949	30	1028	167	29	44	44	44
+Shadow seeker	Luferson Castle	923	939	30	1028	167	29	44	44	44
+Sheriff	Luferson Castle	1210	1254	30	3330	345	48	80	68	68
+Skeleton	Luferson Castle	649	675	25	1193	210	31	46	86	46
+Skeleton	Luferson Castle	612	642	30	1193	210	31	46	86	46
+Skeleton	Luferson Castle	556	588	25	1193	210	31	46	86	46
+Skeleton	Luferson Castle	557	593	30	1193	210	31	46	86	46
+Skeleton champion	Luferson Castle	662	695	25	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	662	706	30	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	1019	1044	25	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	1005	1039	30	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	976	1001	25	1787	251	37	54	100	54
+Skeleton champion	Luferson Castle	965	997	30	1787	251	37	54	100	54
+Skeleton knight	Luferson Castle	588	618	25	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	627	659	30	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	901	911	30	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	929	943	25	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	899	915	35	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	951	972	30	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	980	1001	25	1572	238	35	51	96	51
+Skeleton knight	Luferson Castle	959	987	30	1572	238	35	51	96	51
+Skeleton warrior	Luferson Castle	975	1002	30	1373	224	33	49	91	49
+Skeleton warrior	Luferson Castle	968	993	25	1373	224	33	49	91	49
+Skeleton warrior	Luferson Castle	971	995	25	1373	224	33	49	91	49
+Skeleton warrior	Luferson Castle	961	995	30	1373	224	33	49	91	49
+Skeleton warrior	Luferson Castle	638	671	25	1373	224	33	49	91	49
+Skeleton warrior	Luferson Castle	627	671	30	1373	224	33	49	91	49
+Smilodon	Luferson Castle	440	471	25	1564	201	37	63	63	54
+Smilodon	Luferson Castle	392	432	30	1564	201	37	63	63	54
+Smilodon	Luferson Castle	440	470	25	1564	201	37	63	63	54
+Smilodon	Luferson Castle	395	431	30	1564	201	37	63	63	54
+Smilodon	Luferson Castle	421	459	25	1564	201	37	63	63	54
+Smilodon	Luferson Castle	426	472	30	1564	201	37	63	63	54
+Smilodon	Luferson Castle	755	781	30	1564	201	37	63	63	54
+Smilodon	Luferson Castle	790	814	25	1564	201	37	63	63	54
+Smilodon	Luferson Castle	823	858	35	1564	201	37	63	63	54
+Stegodon	Luferson Castle	666	702	30	2854	516	38	55	55	55
+Stegodon	Luferson Castle	1173	1242	25	2854	516	38	55	55	55
+Stegodon	Luferson Castle	1131	1245	25	2854	516	38	55	55	55
+Stegodon	Luferson Castle	831	891	25	2854	516	38	55	55	55
+Stinger	Luferson Castle	871	912	25	1286	346	34	50	50	50
+Stinger	Luferson Castle	892	937	30	1286	346	34	50	50	50
+Stone golem	Luferson Castle	1774	1805	30	11000	720	100	200	200	200
+Stone golem	Luferson Castle	1899	1922	30	11000	720	100	200	200	200
+Stone golem	Luferson Castle	1916	1941	25	11000	720	100	200	200	200
+Stone golem	Luferson Castle	1930	1950	25	11000	720	100	200	200	200
+treant	Luferson Castle	1159	1185	30	4773	405	55	85	160	120
+treant	Luferson Castle	1103	1135	30	4773	405	55	85	160	120
+treant	Luferson Castle	1099	1131	30	4773	405	55	85	160	120
+Troll	Luferson Castle	1437	1463	45	21556	315	70	56	56	56
+Troll	Luferson Castle	1500	1521	45	21556	315	70	56	56	56
+Troll	Luferson Castle	1283	1308	60	21556	315	70	56	56	56
+Troll	Luferson Castle	1199	1228	60	21556	315	70	56	56	56
+Troll	Luferson Castle	1202	1234	60	21556	315	70	56	56	56
+Troll Warrior	Luferson Castle	1240	1273	60	38190	360	80	56	56	56
+Troll Warrior	Luferson Castle	1345	1374	45	38190	360	80	56	56	56
+Troll Warrior	Luferson Castle	1209	1242	45	38190	360	80	56	56	56
+Troll Warrior	Luferson Castle	1411	1444	60	38190	360	80	56	56	56
+Troll Warrior	Luferson Castle	1334	1362	60	38190	360	80	56	56	56
+Tyon	Luferson Castle	347	367	30	8423	405	55	197	197	197
+Tyon	Luferson Castle	366	387	30	8423	405	55	197	197	197
+Tyon	Luferson Castle	444	464	30	8423	405	55	197	197	197
+Tyon	Luferson Castle	477	495	30	8423	405	55	197	197	197
+Tyon	Luferson Castle	447	466	30	8423	405	55	197	197	197
+Tyon	Luferson Castle	386	402	30	8423	405	55	197	197	197
+undying	Luferson Castle	1032	1049	30	1202	336	33	49	91	49
+undying	Luferson Castle	1033	1046	30	1202	336	33	49	91	49
+undying	Luferson Castle	1032	1045	30	1202	336	33	49	91	49
+Uruk Blade	Luferson Castle	1700	1718	30	2478	504	70	154	154	154
+Uruk Blade	Luferson Castle	1759	1777	30	2478	504	70	154	154	154
+Uruk Blade	Luferson Castle	1711	1728	30	2478	504	70	154	154	154
+Uruk Hai	Luferson Castle	1686	1704	30	1669	432	60	154	154	154
+Uruk Hai	Luferson Castle	1737	1756	30	1669	432	60	154	154	154
+Uruk Hai	Luferson Castle	1742	1760	30	1669	432	60	154	154	154
+Uruk Tron	Luferson Castle	1563	1586	60	3513	576	80	154	154	154
+Uruk Tron	Luferson Castle	1649	1673	60	3513	576	80	154	154	154
+Uruk Tron	Luferson Castle	1620	1643	60	3513	576	80	154	154	154
+Wild smilodon	Luferson Castle	736	773	30	1769	212	39	67	67	56
+Wild smilodon	Luferson Castle	738	774	25	1769	212	39	67	67	56
+Wild smilodon	Luferson Castle	832	884	30	1769	212	39	67	67	56
+Wild smilodon	Luferson Castle	833	865	25	1769	212	39	67	67	56
+Wild smilodon	Luferson Castle	874	902	25	1769	212	39	67	67	56
+Wild smilodon	Luferson Castle	873	915	30	1769	212	39	67	67	56
+Ancient	Ronark Land	587	587	20	3577	315	50	75	150	120
+Ancient	Ronark Land	595	595	20	3577	315	50	75	150	120
+Ancient	Ronark Land	603	603	20	3577	315	50	75	150	120
+Ancient	Ronark Land	607	607	20	3577	315	50	75	150	120
+Ancient	Ronark Land	602	602	20	3577	315	50	75	150	120
+Ancient	Ronark Land	593	593	20	3577	315	50	75	150	120
+Ancient	Ronark Land	588	588	20	3577	315	50	75	150	120
+Ancient	Ronark Land	589	589	20	3577	315	50	75	150	120
+Ancient	Ronark Land	594	594	20	3577	315	50	75	150	120
+Ancient	Ronark Land	602	602	20	3577	315	50	75	150	120
+Ancient	Ronark Land	607	607	20	3577	315	50	75	150	120
+Ancient	Ronark Land	607	607	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1438	1438	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1439	1439	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1430	1430	20	3577	315	50	75	150	120
+Elite Pirate	Ronark Land	?	?	60	30000	?	60	?	?	?
+Ancient	Ronark Land	1418	1418	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1410	1410	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1410	1410	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1418	1418	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1427	1427	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1418	1418	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1428	1428	20	3577	315	50	75	150	120
+Ancient	Ronark Land	1429	1429	20	3577	315	50	75	150	120
+Apostle of Flames	Ronark Land	1094	1094	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1099	1099	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	762	762	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	763	763	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	754	754	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	751	751	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	756	756	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1226	1226	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1232	1232	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1220	1220	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1213	1213	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1221	1221	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1101	1101	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1095	1095	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1106	1106	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1111	1111	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1103	1103	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1094	1094	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1104	1104	20	46556	1000	70	100	100	100
+Apostle of Flames	Ronark Land	1103	1103	20	46556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	281	281	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	276	276	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	263	263	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	265	265	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	271	271	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	236	236	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	239	239	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	225	225	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	220	220	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	229	229	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1780	1780	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1770	1770	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1766	1766	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1776	1776	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1773	1773	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1786	1786	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1795	1795	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1802	1802	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1792	1792	20	42556	1000	70	100	100	100
+Apostle of Piercing Cold	Ronark Land	1792	1792	20	42556	1000	70	100	100	100
+Atross	Ronark Land	1009	1009	3600	89650	1224	85	500	500	500
+Atross	Ronark Land	968	968	3600	89650	1224	85	500	500	500
+Atross	Ronark Land	999	999	3600	89650	1224	85	500	500	500
+Atross	Ronark Land	1015	1015	3600	89650	1224	85	500	500	500
+Atross	Ronark Land	1043	1043	3600	89650	1224	85	500	500	500
+Atross	Ronark Land	1084	1084	3600	89650	1224	85	500	500	500
+Balrog	Ronark Land	427	427	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	423	423	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	427	427	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	423	423	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	423	423	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	733	733	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	745	745	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	731	731	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	717	717	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	732	732	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	1625	1625	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	1629	1629	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	1617	1617	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	1625	1625	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	1645	1645	30	81775	2000	100	120	120	120
+Balrog	Ronark Land	1300	1300	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	1317	1317	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	1312	1312	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	1326	1326	20	81775	2000	100	120	120	120
+Balrog	Ronark Land	1318	1318	20	81775	2000	100	120	120	120
+Beast	Ronark Land	287	287	20	3549	299	52	86	86	73
+Beast	Ronark Land	302	302	20	3549	299	52	86	86	73
+Beast	Ronark Land	304	304	20	3549	299	52	86	86	73
+Beast	Ronark Land	1573	1573	20	3549	299	52	86	86	73
+Beast	Ronark Land	1590	1590	20	3549	299	52	86	86	73
+Beast	Ronark Land	1592	1592	20	3549	299	52	86	86	73
+Beast	Ronark Land	1578	1578	20	3549	299	52	86	86	73
+Blood seeker	Ronark Land	411	411	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	405	405	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	412	412	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	419	419	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1570	1570	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1563	1563	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1567	1567	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1575	1575	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1115	1115	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1122	1122	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1131	1131	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1126	1126	20	3681	360	50	70	70	70
+Blood seeker	Ronark Land	1123	1123	20	3681	360	50	70	70	70
+Booro	Ronark Land	1589	1705	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1625	1637	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1597	1621	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1613	1633	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1581	1589	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1585	1601	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1369	1369	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1373	1373	30	95000	1250	100	0	0	200
+Booro	Ronark Land	661	661	20	95000	1250	100	0	0	200
+Booro	Ronark Land	668	668	20	95000	1250	100	0	0	200
+Booro	Ronark Land	682	682	20	95000	1250	100	0	0	200
+Booro	Ronark Land	674	674	20	95000	1250	100	0	0	200
+Booro	Ronark Land	671	671	20	95000	1250	100	0	0	200
+Booro	Ronark Land	363	363	30	64124	2000	90	120	120	120
+Booro	Ronark Land	383	383	30	64124	2000	90	120	120	120
+Booro	Ronark Land	367	367	30	64124	2000	90	120	120	120
+Booro	Ronark Land	379	379	30	64124	2000	90	120	120	120
+Booro	Ronark Land	379	379	30	64124	2000	90	120	120	120
+Booro	Ronark Land	1357	1377	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1369	1385	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1349	1373	30	95000	1250	100	0	0	200
+Booro	Ronark Land	1373	1377	30	95000	1250	100	0	0	200
+Cardinal	Ronark Land	203	203	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	191	191	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	187	187	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	198	198	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	195	195	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	166	166	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	151	151	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	156	156	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	169	169	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	159	159	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	150	150	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	138	138	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	143	143	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	153	153	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	147	147	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	198	198	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	189	189	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	174	174	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	185	185	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	171	171	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1860	1860	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1860	1860	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1871	1871	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1873	1873	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1867	1867	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1854	1854	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1863	1863	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1864	1864	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1859	1859	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1851	1851	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1905	1905	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1890	1890	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1889	1889	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1904	1904	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1898	1898	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1899	1899	20	4664	396	55	91	76	76
+Cardinal	Ronark Land	1901	1901	20	4664	396	55	91	76	76
+Chaos Stone	Ronark Land	1013	1013	7200	250000	2500	80	250	250	250
+Crimson Wing	Ronark Land	790	790	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	798	798	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	805	805	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	796	796	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	797	797	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	772	772	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	766	766	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	778	778	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	782	782	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	773	773	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	819	819	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	812	812	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	827	827	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1302	1302	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1292	1292	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1285	1285	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1293	1293	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1292	1292	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1250	1250	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1255	1255	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1244	1244	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1239	1239	20	43835	810	90	200	200	154
+Crimson Wing	Ronark Land	1246	1246	20	43835	810	90	200	200	154
+Cruel	Ronark Land	852	852	?	55841	2914	73	55	55	55
+Cruel	Ronark Land	1190	1190	?	55841	2914	73	55	55	55
+Dark Knight	Ronark Land	456	456	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	442	442	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	442	442	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	456	456	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	450	450	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	434	434	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	445	445	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	445	445	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	434	434	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	438	438	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1537	1537	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	1537	1537	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	1533	1533	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	1537	1537	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	1525	1525	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	467	467	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	467	467	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	479	479	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	463	463	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	475	475	30	88014	535	82	50	50	150
+Dark Knight	Ronark Land	1518	1518	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1527	1527	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1520	1520	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1529	1529	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1536	1536	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1544	1544	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1537	1537	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1545	1545	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1526	1526	20	88014	535	70	50	50	300
+Dark Knight	Ronark Land	1539	1539	20	88014	535	70	50	50	300
+Dark stone	Ronark Land	1461	1461	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1453	1453	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1477	1477	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1445	1445	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1453	1457	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1477	1477	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1469	1469	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1497	1497	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1457	1457	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1469	1469	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1361	1357	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1393	1393	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1389	1389	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1389	1389	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1377	1377	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1341	1341	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1345	1345	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1337	1337	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1365	1365	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	1353	1353	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	603	603	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	615	615	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	611	611	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	603	603	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	595	595	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	631	631	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	623	623	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	615	615	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	631	631	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	627	627	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	703	703	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	715	715	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	715	715	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	719	719	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	711	711	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	719	719	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	723	723	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	719	719	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	723	723	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	719	719	30	17000	1600	120	25	25	255
+Dark stone	Ronark Land	715	715	30	17000	1600	120	25	25	255
+Doom Soldier	Ronark Land	306	306	20	45845	500	70	120	120	100
+Doom Soldier	Ronark Land	307	307	20	45845	500	70	120	120	100
+Doom Soldier	Ronark Land	377	377	20	45845	500	70	120	120	100
+Doom Soldier	Ronark Land	368	368	20	45845	500	70	120	120	100
+Doom Soldier	Ronark Land	1659	1659	20	45845	500	70	120	120	100
+Doom Soldier	Ronark Land	1674	1674	20	45845	500	70	120	120	100
+Doom Soldier	Ronark Land	1739	1739	20	45845	500	70	120	120	100
+Doom Soldier	Ronark Land	1727	1727	20	45845	500	70	120	120	100
+Enigma	Ronark Land	664	664	?	148412	2541	70	555	555	555
+Enigma	Ronark Land	1397	1397	?	148412	2541	70	555	555	555
+Evil Wizard	Ronark Land	623	623	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	615	615	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	608	608	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	615	615	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	579	579	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	574	574	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	562	562	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	567	567	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	525	525	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	510	510	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	511	511	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	735	735	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	731	731	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1636	1636	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1623	1623	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1623	1623	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1635	1635	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1629	1629	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1159	1159	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1154	1154	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1165	1165	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1171	1171	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1163	1163	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1438	1438	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1444	1444	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1455	1455	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1449	1449	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1501	1501	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1508	1508	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1517	1517	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1512	1512	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1553	1553	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1564	1564	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	1564	1564	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	726	726	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	728	728	20	38912	1567	70	300	300	300
+Evil Wizard	Ronark Land	738	738	20	38912	1567	70	300	300	300
+Falcon	Ronark Land	444	444	20	66460	990	100	250	250	154
+Falcon	Ronark Land	451	451	20	66460	990	100	250	250	154
+Falcon	Ronark Land	462	462	20	66460	990	100	250	250	154
+Falcon	Ronark Land	455	455	20	66460	990	100	250	250	154
+Falcon	Ronark Land	452	452	20	66460	990	100	250	250	154
+Falcon	Ronark Land	1248	1248	20	66460	990	100	250	250	154
+Falcon	Ronark Land	1251	1251	20	66460	990	100	250	250	154
+Falcon	Ronark Land	1235	1235	20	66460	990	100	250	250	154
+Falcon	Ronark Land	1234	1234	20	66460	990	100	250	250	154
+Falcon	Ronark Land	1242	1242	20	66460	990	100	250	250	154
+Havoc	Ronark Land	1309	1309	?	95748	3214	75	555	555	555
+Havoc	Ronark Land	759	759	?	95748	3214	75	555	555	555
+Hell Fire	Ronark Land	975	975	?	165451	2547	75	555	555	555
+Hell Fire	Ronark Land	1692	1692	20	165451	2547	75	555	555	555
+Hell Fire	Ronark Land	357	357	?	165451	2547	75	555	555	555
+Hell Fire	Ronark Land	1082	1082	?	165451	2547	75	555	555	555
+HOBGOBLIN	Ronark Land	1464	1464	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1406	1406	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	647	647	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	710	710	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	642	642	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	625	625	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	603	603	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	603	603	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	614	614	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	704	704	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	712	712	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	714	714	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	721	721	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	724	724	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	732	732	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	728	728	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	734	734	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	732	732	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	737	737	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	732	732	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	735	735	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	728	728	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	729	729	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	723	723	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	715	715	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	712	712	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	705	705	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	697	697	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	690	690	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	689	683	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	678	678	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	671	671	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	667	667	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	657	657	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	652	652	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	644	644	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	641	641	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	635	635	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	633	633	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	623	623	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	623	623	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	613	613	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	617	617	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	614	614	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	621	621	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	622	622	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	622	622	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	631	631	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	630	630	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	637	637	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	641	641	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1382	1382	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1385	1385	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1376	1376	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1379	1379	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1371	1371	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1378	1378	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1370	1370	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1375	1375	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1367	1367	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1372	1372	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1365	1365	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1372	1372	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1372	1372	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1381	1381	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1385	1385	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1396	1396	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1396	1396	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1401	1401	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1406	1406	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1414	1414	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1418	1418	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1426	1426	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1433	1433	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1440	1440	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1446	1446	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1450	1450	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1456	1456	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1461	1461	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1470	1470	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1474	1474	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1482	1482	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1485	1485	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1495	1495	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1496	1496	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1495	1495	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1503	1503	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1503	1503	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1512	1512	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1509	1509	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1514	1514	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1514	1514	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1515	1515	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1516	1516	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1504	1504	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1500	1500	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1492	1492	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1487	1487	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1479	1479	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1472	1472	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1467	1467	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1459	1459	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	665	665	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	677	677	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	687	687	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	698	698	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1473	1473	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1456	1456	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1441	1441	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1441	1441	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1439	1439	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1428	1428	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1426	1426	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1418	1418	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1415	1415	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1402	1402	20	6709	607	71	158	158	158
+HOBGOBLIN	Ronark Land	1408	1408	20	6709	607	71	158	158	158
+Orc bandit archer	Ronark Land	1879	1879	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	154	154	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	158	158	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	155	155	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	134	134	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	123	123	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	120	120	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	128	128	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	141	141	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	152	152	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1884	1884	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1879	1879	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1883	1883	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1888	1888	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1897	1897	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1906	1906	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1919	1919	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1930	1930	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1936	1936	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1937	1937	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1932	1932	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1919	1919	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1905	1905	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1896	1896	20	1380	360	50	25	25	25
+Orc bandit archer	Ronark Land	1887	1887	20	1380	360	50	25	25	25
+Orc bandit leader	Ronark Land	1921	1921	20	227340	864	120	25	25	25
+Orc bandit leader	Ronark Land	119	119	14440	227340	864	120	25	25	25
+Orc bandit officer	Ronark Land	1878	1878	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1911	1911	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	157	157	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	168	168	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	147	147	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	121	121	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	119	119	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	106	106	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1884	1884	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1889	1889	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1907	1907	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	1923	1923	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	1923	1923	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	1910	1910	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	1896	1896	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	1894	1894	20	27692	720	100	25	25	25
+Orc bandit officer	Ronark Land	1866	1866	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1869	1869	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1888	1888	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1898	1898	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1936	1936	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1940	1940	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1939	1939	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	1924	1924	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	107	107	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	136	136	20	55384	720	100	25	25	25
+Orc bandit officer	Ronark Land	150	150	20	55384	720	100	25	25	25
+Orc bandit Warrior	Ronark Land	136	136	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	130	130	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	127	127	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	133	133	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	141	141	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	148	148	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	149	149	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	147	147	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	1895	1895	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	1900	1900	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	1914	1914	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	1903	1903	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	1917	1917	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	1919	1919	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	1912	1912	20	2301	360	50	25	25	25
+Orc bandit Warrior	Ronark Land	1905	1905	20	2301	360	50	25	25	25
+Riote	Ronark Land	1007	1007	3600	43112	756	70	84	84	84
+Riote	Ronark Land	974	974	3600	43112	756	70	84	84	84
+Riote	Ronark Land	986	986	3600	43112	756	70	84	84	84
+Riote	Ronark Land	1054	1054	3600	43112	756	70	84	84	84
+Riote	Ronark Land	1098	1098	3600	43112	756	70	84	84	84
+Riote	Ronark Land	1000	1000	3600	43112	756	70	84	84	84
+Ronark Land Monument	Ronark Land	1014	1014	30	150000	5000	80	250	250	250
+Stone golem	Ronark Land	557	557	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	547	547	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	542	542	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	551	551	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	547	547	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	517	517	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	524	524	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	526	526	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	533	533	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	525	525	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1559	1559	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1551	1551	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1556	1556	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1564	1564	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1557	1557	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1570	1570	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1580	1580	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1585	1585	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1576	1576	20	11000	720	100	50	50	50
+Stone golem	Ronark Land	1576	1576	20	11000	720	100	50	50	50
+Titan	Ronark Land	466	466	20	20000	1638	130	25	25	255
+Titan	Ronark Land	479	479	20	20000	1638	130	25	25	255
+Titan	Ronark Land	486	486	20	20000	1638	130	25	25	255
+Titan	Ronark Land	473	473	20	20000	1638	130	25	25	255
+Titan	Ronark Land	474	474	20	20000	1638	130	25	25	255
+Titan	Ronark Land	1459	1459	20	20000	1638	130	25	25	255
+Titan	Ronark Land	1443	1443	20	20000	1638	130	25	25	255
+Titan	Ronark Land	1439	1439	20	20000	1638	130	25	25	255
+Titan	Ronark Land	1454	1454	20	20000	1638	130	25	25	255
+Titan	Ronark Land	1449	1449	20	20000	1638	130	25	25	255
+treant	Ronark Land	547	547	20	4773	405	55	85	160	120
+treant	Ronark Land	550	550	20	4773	405	55	85	160	120
+treant	Ronark Land	548	548	20	4773	405	55	85	160	120
+treant	Ronark Land	541	541	20	4773	405	55	85	160	120
+treant	Ronark Land	531	531	20	4773	405	55	85	160	120
+treant	Ronark Land	521	521	20	4773	405	55	85	160	120
+treant	Ronark Land	522	522	20	4773	405	55	85	160	120
+treant	Ronark Land	526	526	20	4773	405	55	85	160	120
+treant	Ronark Land	533	533	20	4773	405	55	85	160	120
+treant	Ronark Land	540	540	20	4773	405	55	85	160	120
+treant	Ronark Land	545	545	20	4773	405	55	85	160	120
+treant	Ronark Land	538	538	20	4773	405	55	85	160	120
+treant	Ronark Land	1514	1514	20	4773	405	55	85	160	120
+treant	Ronark Land	1518	1518	20	4773	405	55	85	160	120
+treant	Ronark Land	1508	1508	20	4773	405	55	85	160	120
+treant	Ronark Land	1501	1501	20	4773	405	55	85	160	120
+treant	Ronark Land	1501	1501	20	4773	405	55	85	160	120
+treant	Ronark Land	1507	1507	20	4773	405	55	85	160	120
+treant	Ronark Land	1482	1482	20	4773	405	55	85	160	120
+treant	Ronark Land	1473	1473	20	4773	405	55	85	160	120
+treant	Ronark Land	1473	1473	20	4773	405	55	85	160	120
+treant	Ronark Land	1481	1481	20	4773	405	55	85	160	120
+treant	Ronark Land	1490	1490	20	4773	405	55	85	160	120
+treant	Ronark Land	1490	1490	20	4773	405	55	85	160	120
+Troll	Ronark Land	140	140	30	41748	1296	90	175	175	175
+Troll	Ronark Land	144	144	30	41748	1296	90	175	175	175
+Troll	Ronark Land	160	160	30	41748	1296	90	175	175	175
+Troll	Ronark Land	184	184	30	41748	1296	90	175	175	175
+Troll	Ronark Land	180	180	30	41748	1296	90	175	175	175
+Troll	Ronark Land	180	180	30	41748	1296	90	175	175	175
+Troll	Ronark Land	160	164	30	41748	1296	90	175	175	175
+Troll	Ronark Land	124	124	30	21556	315	70	56	56	56
+Troll	Ronark Land	136	136	30	21556	315	70	56	56	56
+Troll	Ronark Land	140	140	30	21556	315	70	56	56	56
+Troll	Ronark Land	148	148	30	21556	315	70	56	56	56
+Troll	Ronark Land	1916	1916	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1908	1908	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1912	1912	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1916	1916	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1916	1916	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1872	1872	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1880	1880	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1880	1880	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1888	1888	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1888	1888	30	41748	1296	90	175	175	175
+Troll	Ronark Land	136	136	30	41748	1296	90	175	175	175
+Troll	Ronark Land	152	152	30	41748	1296	90	175	175	175
+Troll	Ronark Land	140	140	30	41748	1296	90	175	175	175
+Troll	Ronark Land	152	152	30	41748	1296	90	175	175	175
+Troll	Ronark Land	156	156	30	41748	1296	90	175	175	175
+Troll	Ronark Land	168	168	30	41748	1296	90	175	175	175
+Troll	Ronark Land	180	180	30	41748	1296	90	175	175	175
+Troll	Ronark Land	188	188	30	41748	1296	90	175	175	175
+Troll	Ronark Land	184	184	30	41748	1296	90	175	175	175
+Troll	Ronark Land	188	188	30	41748	1296	90	175	175	175
+Troll	Ronark Land	132	132	30	41748	1296	90	175	175	175
+Troll	Ronark Land	144	144	30	41748	1296	90	175	175	175
+Troll	Ronark Land	120	120	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1916	1916	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1924	1924	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1908	1908	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1912	1912	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1920	1920	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1900	1900	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1908	1908	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1900	1900	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1912	1912	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1908	1908	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1868	1868	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1880	1880	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1880	1880	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1884	1884	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1880	1880	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1928	1928	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1936	1936	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1932	1932	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1932	1932	30	41748	1296	90	175	175	175
+Troll	Ronark Land	1936	1936	30	41748	1296	90	175	175	175
+Troll Warrior	Ronark Land	116	116	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	136	136	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	136	136	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	128	128	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	136	136	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	140	140	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	164	164	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	160	160	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	156	156	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	156	156	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1892	1892	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1892	1892	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1920	1920	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1928	1928	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1932	1932	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1932	1932	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1928	1928	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1880	1880	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1896	1896	30	38190	360	80	56	56	56
+Troll Warrior	Ronark Land	1892	1892	30	38190	360	80	56	56	56
+DARK MARE	Ronark Land	79	125	60	49847	2088	145	600	800	800
+DARK MARE	Ronark Land	87	131	60	49847	2088	145	600	800	800
+DARK MARE	Ronark Land	86	119	60	49847	2088	145	600	800	800
+DARK MARE	Ronark Land	87	117	60	49847	2088	145	600	800	800
+DREAD MARE	Ronark Land	127	179	60	162283	3465	175	1200	1400	1400
+DREAD MARE	Ronark Land	196	250	60	162283	3465	175	1200	1400	1400
+DREAD MARE	Ronark Land	139	190	60	162283	3465	175	1200	1400	1400
+DREAD MARE	Ronark Land	218	271	60	162283	3465	175	1200	1400	1400
+Anger	Bifrost	0	0	?	81009	2525	145	0	0	0
+Ego	Bifrost	0	0	?	35000	2015	110	0	0	0
+Envy	Bifrost	0	0	?	160355	5077	190	0	0	0
+ethiroth	Bifrost	0	0	?	21510	1350	110	0	0	0
+Glutton	Bifrost	0	0	?	61775	2234	130	0	0	0
+Greed	Bifrost	0	0	?	217755	6073	210	0	0	0
+Lust	Bifrost	0	0	?	120533	4055	175	0	0	0
+Wrath	Bifrost	0	0	?	125970	1242	130	0	0	0`;
+
+  // Veriyi parse et ve grupla
+  const parseAndGroupMonsters = useMemo(() => {
+    const lines = rawMonsterData.trim().split('\n');
+    const monsterMap = new Map();
+
+    // Zone normalize fonksiyonu - benzer zone'ları birleştir
+    const normalizeZone = (zone) => {
+      const normalized = zone.trim();
+      // Karus Eslant ve El Morad Eslant -> Karus/Human Eslant
+      if (normalized === 'Karus Eslant' || normalized === 'El Morad Eslant') {
+        return 'Karus/Human Eslant';
+      }
+      // El Morad Castle ve Luferson Castle -> Luferson/Elmorad Castle
+      if (normalized === 'El Morad Castle' || normalized === 'Luferson Castle') {
+        return 'Luferson/Elmorad Castle';
+      }
+      // Desperation Abyss -> Delos
+      if (normalized === 'Desperation Abyss') {
+        return 'Delos';
+      }
+      return normalized;
+    };
+
+    lines.forEach(line => {
+      const parts = line.split('\t');
+      if (parts.length >= 8) {
+        // Monster ismini normalize et (trim ve boşlukları normalize et)
+        const name = parts[0].trim().replace(/\s+/g, ' ');
+        const originalZone = parts[1].trim();
+        const zone = normalizeZone(originalZone); // Zone'u normalize et
+        // X, Y, FR, GR, LR atlanıyor - sadece şunlar alınıyor:
+        const respawnStr = parts[4]?.trim();
+        const respawn = respawnStr === '?' ? '?' : (parseInt(respawnStr) || 0);
+        const hp = parseInt(parts[5]) || 0;
+        const def = parseInt(parts[6]) || 0;
+        const level = parseInt(parts[7]) || 0;
+
+        // Aynı isimli monster varsa, sadece zone'u ekle (tek bir entry olacak)
+        if (monsterMap.has(name)) {
+          const existing = monsterMap.get(name);
+          // Zone'u ekle (duplicate kontrolü)
+          if (!existing.zones.includes(zone)) {
+            existing.zones.push(zone);
+          }
+          // Diğer stat'ları güncelleme (ilk görülen değerleri kullan)
+        } else {
+          // Yeni monster ekle (tek seferlik)
+          monsterMap.set(name, {
+            name,
+            zones: [zone],
+            respawn,
+            hp,
+            def,
+            level,
+          });
+        }
+      }
+    });
+
+    // Map'i array'e çevir ve zone'ları sırala
+    const result = Array.from(monsterMap.values()).map(monster => ({
+      ...monster,
+      zones: monster.zones.sort(),
+    }));
+
+    // Level'a göre sırala
+    return result.sort((a, b) => a.level - b.level);
+  }, []);
+
+  // Zone listesini çıkar - Normalize edilmiş zone'lar
+  const allZones = useMemo(() => {
+    // Normalize edilmiş zone'lar (Karus Eslant ve El Morad Eslant -> Karus/Human Eslant, El Morad Castle ve Luferson Castle -> Luferson/Elmorad Castle)
+    const allowedZones = ['Moradon', 'Karus/Human Eslant', 'Luferson/Elmorad Castle', 'Ronark Land', 'Delos', 'Hell Abyss', 'Bifrost'];
+    return ['Tümü', ...allowedZones];
+  }, []);
+
+  // Filtreleme - Normalize edilmiş zone'lardaki monster'lar
+  const filteredMonsters = useMemo(() => {
+    const allowedZones = ['Moradon', 'Karus/Human Eslant', 'Luferson/Elmorad Castle', 'Ronark Land', 'Delos', 'Hell Abyss', 'Bifrost'];
+    
+    // Önce sadece izin verilen zone'larda olan monster'ları filtrele
+    let filtered = parseAndGroupMonsters.filter(monster => {
+      return monster.zones.some(zone => allowedZones.includes(zone));
+    });
+
+    // Zone filtresi
+    if (selectedZone !== 'Tümü') {
+      filtered = filtered.filter(monster => monster.zones.includes(selectedZone));
+    }
+
+    // Arama filtresi
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(monster =>
+        monster.name.toLowerCase().includes(query)
+      );
+    }
+
+    return filtered;
+  }, [parseAndGroupMonsters, selectedZone, searchQuery]);
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
+      <View style={styles.tabContent}>
+        <View style={{ paddingTop: 70 }} />
+        <Text style={styles.homeTitle}>👹 Knight Online Monster</Text>
+        <Text style={styles.sectionDescription}>
+          Monster bilgilerini filtreleyebilir ve arayabilirsiniz
+        </Text>
+
+        {/* Arama Kutusu */}
+        <View style={styles.card}>
+          <TextInput
+            style={styles.input}
+            placeholder="Monster adı ara..."
+            placeholderTextColor="#8E97A8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </View>
+
+        {/* Zone Filtresi */}
+        <View style={styles.card}>
+          <Text style={styles.eventName}>📍 Zone Filtresi</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
+            {allZones.map((zone) => (
+              <TouchableOpacity
+                key={zone}
+                style={[
+                  styles.monsterZoneButton,
+                  selectedZone === zone && styles.monsterZoneButtonActive
+                ]}
+                onPress={() => setSelectedZone(zone)}
+              >
+                <Text
+                  style={[
+                    styles.monsterZoneButtonText,
+                    selectedZone === zone && styles.monsterZoneButtonTextActive
+                  ]}
+                >
+                  {zone}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Monster Tablosu */}
+        <View style={styles.card}>
+          <Text style={styles.eventName}>📊 Monster Listesi ({filteredMonsters.length})</Text>
+          
+          {filteredMonsters.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>Monster bulunamadı</Text>
+            </View>
+          ) : (
+            <>
+              {/* Tablo Başlığı */}
+              <View style={styles.monsterTableHeader}>
+                <Text style={[styles.monsterTableHeaderText, { flex: 2 }]}>AD</Text>
+                <Text style={[styles.monsterTableHeaderText, { flex: 1 }]}>LEVEL</Text>
+                <Text style={[styles.monsterTableHeaderText, { flex: 1.2 }]}>HP</Text>
+                <Text style={[styles.monsterTableHeaderText, { flex: 1 }]}>DEF</Text>
+                <Text style={[styles.monsterTableHeaderText, { flex: 1 }]}>RESPAWN</Text>
+                <Text style={[styles.monsterTableHeaderText, { flex: 2 }]}>KONUM</Text>
+              </View>
+
+              {/* Tablo İçeriği */}
+              {filteredMonsters.map((monster, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.monsterTableRow,
+                    index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd
+                  ]}
+                >
+                  <Text style={[styles.monsterTableCell, { flex: 2, fontWeight: 'bold' }]}>
+                    {monster.name}
+                  </Text>
+                  <Text style={[styles.monsterTableCell, { flex: 1 }]}>
+                    {monster.level}
+                  </Text>
+                  <Text style={[styles.monsterTableCell, { flex: 1.2 }]}>
+                    {monster.hp.toLocaleString()}
+                  </Text>
+                  <Text style={[styles.monsterTableCell, { flex: 1 }]}>
+                    {monster.def.toLocaleString()}
+                  </Text>
+                  <Text style={[styles.monsterTableCell, { flex: 1 }]}>
+                    {monster.respawn === 0 ? '-' : monster.respawn === '?' ? '?' : monster.respawn}
+                  </Text>
+                  <Text style={[styles.monsterTableCell, { flex: 2, fontSize: 10 }]}>
+                    {monster.zones.join(', ')}
+                  </Text>
+                </View>
+              ))}
+            </>
+          )}
+        </View>
+      </View>
+    </ScrollView>
+  );
+};
+
 // Görevler Bileşeni
 const GorevlerScreen = () => {
   const [selectedLevelRange, setSelectedLevelRange] = useState('1-35');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Görev verileri
   // 1-35 Seviye Görevleri - DÜZENLENMİŞ
   const gorevler1_35 = [
-    { seviye: "1.02", baslik: "Worm Hunt", npc: "[Guard] Patrick", aciklama: "5 Worm / Blood Worm öldürün", odul: "250 Exp, 2.000 Noah" },
-    { seviye: "1.02", baslik: "Get rid of the mice", npc: "[Kurian] Potrang", aciklama: "5 Bandicoot / Scavenger Bandicoot öldürün", odul: "250 Exp, 2.000 Noah" },
-    { seviye: "1.02", baslik: "Manufacture Clothing", npc: "[Kurian] Potrang", aciklama: "Potrang'a 2 Apple of Moradon teslim edin", odul: "250 Exp, 2.000 Noah" },
     { seviye: "1.02", baslik: "Obtaining food", npc: "[Kurian] Potrang", aciklama: "Potrang'a 2 Apple of Moradon teslim edin", odul: "250 Exp, 2.000 Noah" },
     { seviye: "2", baslik: "Silk Spool", npc: "[Wealthy Merchant's Daughter] Menissiah", aciklama: "Menissiah'a 2 Apple of Moradon teslim edin", odul: "250 Exp, 2.500 Noah" },
     { seviye: "3", baslik: "Bandicoot hunt", npc: "[Guard] Patrick", aciklama: "5 Bandicoot öldürün", odul: "375 Exp, 2.700 Noah" },
@@ -2464,58 +5178,40 @@ const GorevlerScreen = () => {
       case '35-59': return gorevler35_59;
       case '60-70': return gorevler60_70;
       case '71-83': return gorevler71_83;
-      case 'all': return tumGorevler;
+      case 'Tümü': return tumGorevler;
       default: return gorevler1_35;
     }
   };
 
-  const getSearchedGorevler = () => {
-    const filtered = getFilteredGorevler();
-    if (!searchQuery.trim()) return filtered;
-    
+  const filteredGorevler = getFilteredGorevler().filter(gorev => {
+    if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase().trim();
-    return filtered.filter(gorev => 
+    return (
       gorev.baslik.toLowerCase().includes(query) ||
       gorev.npc.toLowerCase().includes(query) ||
       gorev.aciklama.toLowerCase().includes(query) ||
       gorev.seviye.toLowerCase().includes(query)
     );
-  };
-
-  const filteredGorevler = getSearchedGorevler();
-
-  const GorevItem = ({ seviye, baslik, npc, aciklama, odul }) => (
-    <View style={styles.gorevItem}>
-      <View style={styles.gorevHeader}>
-        <View style={styles.levelBadge}>
-          <Text style={styles.gorevSeviye}>Lv. {seviye}</Text>
-        </View>
-        <Text style={styles.gorevBaslik}>{baslik}</Text>
-      </View>
-      <Text style={styles.gorevNpc}>NPC: {npc}</Text>
-      <Text style={styles.gorevAciklama}>{aciklama}</Text>
-      {odul && <Text style={styles.gorevOdul}>🎁 {odul}</Text>}
-    </View>
-  );
+  });
 
   return (
-    <View style={styles.screen}>
+    <View style={{flex: 1, backgroundColor: '#07070C'}}>
       <View style={styles.tabContent}>
+        <View style={{ paddingTop: 70 }} />
         <Text style={styles.homeTitle}>📋 Knight Online Görevleri</Text>
         
         {/* Seviye Filtreleme Butonları */}
         <View style={styles.filterHeader}>
           <Text style={styles.filterTitle}>Seviye Aralığı: {selectedLevelRange}</Text>
-          <Text style={styles.gorevSayisi}>Toplam {getSearchedGorevler().length} görev</Text>
+          <Text style={styles.gorevSayisi}>Toplam {filteredGorevler.length} görev</Text>
         </View>
 
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false} 
           style={styles.levelButtonsContainer}
-          contentContainerStyle={styles.levelButtonsContent}
         >
-          {['1-35', '35-59', '60-70', '71-83', 'all'].map((range) => (
+          {['1-35', '35-59', '60-70', '71-83', 'Tümü'].map((range) => (
             <TouchableOpacity 
               key={range}
               style={[
@@ -2528,7 +5224,7 @@ const GorevlerScreen = () => {
                 styles.levelButtonText, 
                 selectedLevelRange === range && styles.levelButtonTextActive
               ]}>
-                {range === 'all' ? 'Tümü' : range}
+                {range}
               </Text>
             </TouchableOpacity>
           ))}
@@ -2546,13 +5242,16 @@ const GorevlerScreen = () => {
         </View>
 
         {/* Görev Listesi */}
-        <View style={styles.gorevListContainer}>
-          <ScrollView 
-            style={styles.gorevListesi}
-            showsVerticalScrollIndicator={true}
-            contentContainerStyle={styles.gorevListContent}
-          >
-            {getSearchedGorevler().map((gorev, index) => (
+        <ScrollView 
+          style={styles.gorevListContainer}
+          showsVerticalScrollIndicator={true}
+        >
+          {filteredGorevler.length === 0 ? (
+            <View style={styles.noResults}>
+              <Text style={styles.noResultsText}>Görev bulunamadı</Text>
+            </View>
+          ) : (
+            filteredGorevler.map((gorev, index) => (
               <View key={index} style={styles.gorevItem}>
                 <View style={styles.gorevHeader}>
                   <View style={styles.levelBadge}>
@@ -2564,10 +5263,247 @@ const GorevlerScreen = () => {
                 <Text style={styles.gorevAciklama}>{gorev.aciklama}</Text>
                 {gorev.odul && <Text style={styles.gorevOdul}>🎁 {gorev.odul}</Text>}
               </View>
-            ))}
-          </ScrollView>
-        </View>
+            ))
+          )}
+        </ScrollView>
       </View>
+    </View>
+  );
+};
+
+// Goldbar Fiyatları Bileşeni
+const GoldbarPrices = () => {
+  const [gbPrices, setGbPrices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const webViewRef = useRef(null);
+
+  const fetchGbPrices = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    if (webViewRef.current) {
+      webViewRef.current.reload();
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchGbPrices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const injectedJavaScript = `
+    (function() {
+      function extractPrices() {
+        try {
+          const table = document.querySelector('table');
+          if (!table) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ error: 'Tablo bulunamadı' }));
+            return;
+          }
+
+          const rows = Array.from(table.querySelectorAll('tr'));
+          const prices = [];
+          
+          // İlk satır header, onu atla
+          for (let i = 1; i < rows.length; i++) {
+            const cells = Array.from(rows[i].querySelectorAll('td'));
+            if (cells.length < 3) continue;
+            
+            // Site adını al (ilk hücre)
+            const siteNameCell = cells[0];
+            let siteName = siteNameCell.textContent.trim();
+            
+            // Link varsa al
+            const linkElement = siteNameCell.querySelector('a');
+            const link = linkElement ? linkElement.href : '';
+            
+            // Site adından link metnini temizle
+            if (linkElement) {
+              siteName = linkElement.textContent.trim();
+            }
+            
+            // Resim varsa alt text'i al
+            const img = siteNameCell.querySelector('img');
+            if (img && img.alt) {
+              siteName = img.alt.trim();
+            }
+            
+            // Site ismini temizle ve düzelt
+            siteName = siteName.trim();
+            // klassgame -> klasgame düzeltmesi
+            siteName = siteName.replace(/klassgame/gi, 'klasgame');
+            
+            // Fiyatları al - her server için Satış ve Alış var
+            const serverPrices = {};
+            const servers = ['ZERO', 'AGARTHA', 'FELIS', 'PANDORA', 'DESTAN', 'OREADS', 'MINARK', 'DRYADS'];
+            
+            // İkinci hücreden başla (birinci hücre site adı)
+            let priceIndex = 1;
+            for (let j = 0; j < servers.length && priceIndex + 1 < cells.length; j++) {
+              const server = servers[j];
+              const satisCell = cells[priceIndex];
+              const alisCell = cells[priceIndex + 1];
+              
+              if (satisCell && alisCell) {
+                const satis = satisCell.textContent.trim().replace(/\s*TL\s*/gi, '').trim();
+                const alis = alisCell.textContent.trim().replace(/\s*TL\s*/gi, '').trim();
+                
+                if (satis || alis) {
+                  serverPrices[server] = {
+                    satis: satis || '-',
+                    alis: alis || '-'
+                  };
+                }
+              }
+              priceIndex += 2;
+            }
+            
+            if (siteName && Object.keys(serverPrices).length > 0) {
+              prices.push({
+                site: siteName,
+                link: link,
+                prices: serverPrices
+              });
+            }
+          }
+          
+          if (prices.length > 0) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ prices: prices }));
+          } else {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ error: 'Fiyat verisi bulunamadı' }));
+          }
+        } catch (e) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ error: 'Parse hatası: ' + e.message }));
+        }
+      }
+      
+      // Sayfa yüklendikten sonra çalıştır
+      if (document.readyState === 'complete') {
+        setTimeout(extractPrices, 2000);
+      } else {
+        window.addEventListener('load', function() {
+          setTimeout(extractPrices, 2000);
+        });
+      }
+    })();
+    true;
+  `;
+
+  const handleMessage = useCallback((event) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.error) {
+        setError(data.error);
+        setLoading(false);
+      } else if (data.prices) {
+        setGbPrices(data.prices);
+        setLastUpdate(new Date());
+        setLoading(false);
+      }
+    } catch (e) {
+      setError('Veri parse edilemedi');
+      setLoading(false);
+    }
+  }, []);
+
+  const servers = ['ZERO', 'AGARTHA', 'FELIS', 'PANDORA', 'DESTAN', 'OREADS', 'MINARK', 'DRYADS'];
+
+  return (
+    <View>
+      {/* Gizli WebView - Veri çekmek için */}
+      <WebView
+        ref={webViewRef}
+        source={{ uri: 'https://korehberi.com/en-ucuz-gb' }}
+        style={{ position: 'absolute', height: 1, width: 1, opacity: 0, pointerEvents: 'none', zIndex: -1 }}
+        injectedJavaScript={injectedJavaScript}
+        onMessage={handleMessage}
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+        startInLoadingState={true}
+      />
+      
+      {/* Güncelle Butonu */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <Text style={styles.muted}>
+          {lastUpdate ? `Son güncelleme: ${lastUpdate.toLocaleTimeString('tr-TR')}` : 'Fiyatlar yükleniyor...'}
+        </Text>
+        <TouchableOpacity 
+          style={[
+            styles.linkButton, 
+            { paddingHorizontal: 15, paddingVertical: 8 },
+            loading && { opacity: 0.6 }
+          ]}
+          onPress={fetchGbPrices}
+          disabled={loading}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.linkButtonText}>
+            {loading ? '⏳ Yükleniyor...' : '🔄 Güncelle'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {error && (
+        <View style={styles.card}>
+          <Text style={[styles.eventName, { color: '#e74c3c' }]}>❌ Hata</Text>
+          <Text style={styles.muted}>{error}</Text>
+        </View>
+      )}
+
+      {loading && !error && (
+        <View style={styles.card}>
+          <Text style={styles.eventName}>⏳ Fiyatlar yükleniyor...</Text>
+        </View>
+      )}
+
+      {!loading && !error && gbPrices.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={true} style={{ marginBottom: 20 }}>
+          <View>
+            {/* Tablo Header */}
+            <View style={styles.gbTableHeader}>
+              <Text style={[styles.gbTableHeaderText, { width: 120 }]}>Site</Text>
+              {servers.map((server) => (
+                <View key={server} style={{ width: 150, alignItems: 'center' }}>
+                  <Text style={[styles.gbTableHeaderText, { fontSize: 10, marginBottom: 2 }]}>{server}</Text>
+                  <View style={{ flexDirection: 'row' }}>
+                    <Text style={[styles.gbTableHeaderText, { width: 75, fontSize: 9 }]}>Satış</Text>
+                    <Text style={[styles.gbTableHeaderText, { width: 75, fontSize: 9 }]}>Alış</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+
+            {/* Tablo İçeriği */}
+            {gbPrices.map((item, index) => (
+              <View 
+                key={index} 
+                style={[
+                  styles.gbTableRow,
+                  index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd
+                ]}
+              >
+                <Text style={[styles.gbTableCell, { width: 120, fontWeight: 'bold', fontSize: 11 }]}>
+                  {item.site.toUpperCase().replace('KLASSGAME', 'KLASGAME')}
+                </Text>
+                {servers.map((server) => {
+                  const serverData = item.prices[server];
+                  return (
+                    <View key={server} style={{ width: 150, flexDirection: 'row' }}>
+                      <Text style={[styles.gbTableCell, { width: 75, fontSize: 10, color: '#2ecc71', fontWeight: '600' }]}>
+                        {serverData?.satis || '-'}
+                      </Text>
+                      <Text style={[styles.gbTableCell, { width: 75, fontSize: 10, color: '#e74c3c', fontWeight: '600' }]}>
+                        {serverData?.alis || '-'}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+      )}
     </View>
   );
 };
@@ -2575,75 +5511,35 @@ const GorevlerScreen = () => {
 // Merchant Alt Sekmeleri
 const MerchantScreen = ({ activeSubTab, setActiveSubTab }) => {
   const merchantSubTabs = [
-    { id: 'pazar', icon: '💰', label: 'Pazar' },
-    { id: 'goldbar', icon: '💎', label: 'Goldbar' },
+    { id: 'pazar', icon: '💰', label: 'Pazar', url: 'https://www.uskopazar.com' },
+    { id: 'goldbar', icon: '💎', label: 'Goldbar', url: 'https://www.enucuzgb.com' },
   ];
 
-  const [fullWebKey, setFullWebKey] = useState(null);
+  const [showWebView, setShowWebView] = useState(false);
+  const [webViewUrl, setWebViewUrl] = useState('');
+  const [webViewTitle, setWebViewTitle] = useState('');
 
-  const openWeb = (key) => setFullWebKey(key);
-  const closeWeb = () => setFullWebKey(null);
-
-  const WebViewTab = ({ url, title, onBack }) => {
-    const [loading, setLoading] = useState(true);
-
-    return (
-      <View style={styles.webViewContainer}>
-        <View style={styles.webViewHeader}>
-          <TouchableOpacity onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backButtonText}>⬅️ Geri</Text>
-          </TouchableOpacity>
-          <Text style={styles.webViewTitle}>{title}</Text>
-          {loading && (
-            <View style={styles.loadingContainer}>
-              <Text style={styles.loadingText}>Yükleniyor...</Text>
-            </View>
-          )}
-        </View>
-        <WebView
-          source={{ uri: url }}
-          style={styles.webView}
-          startInLoadingState={true}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          onError={() => setLoading(false)}
-          scalesPageToFit={true}
-        />
-      </View>
-    );
+  const handleLinkPress = (url, title) => {
+    setWebViewUrl(url);
+    setWebViewTitle(title);
+    setShowWebView(true);
   };
 
-  if (fullWebKey) {
-    switch(fullWebKey) {
-      case 'pazar':
-        return (
-          <WebViewTab 
-            url="https://www.uskopazar.com"
-            title="💰 UskoPazar - Knight Online Pazar"
-            onBack={closeWeb}
-          />
-        );
-      case 'goldbar':
-        return (
-          <WebViewTab 
-            url="https://www.enucuzgb.com"
-            title="💎 EnUcuzGB - Goldbar Fiyatları"
-            onBack={closeWeb}
-          />
-        );
-      default:
-        return null;
-    }
+  if (showWebView) {
+    return (
+      <WebViewScreen 
+        url={webViewUrl}
+        title={webViewTitle}
+        onBack={() => setShowWebView(false)}
+      />
+    );
   }
 
   return (
-    <View style={styles.screen}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
       <View style={styles.tabContent}>
         <Text style={styles.homeTitle}>💰 Merchant</Text>
         
-        {/* GÜNCELLENMİŞ ALT SEKMELER - Master gibi */}
         <View style={styles.enhancedSubTabContainer}>
           <ScrollView 
             horizontal 
@@ -2676,124 +5572,79 @@ const MerchantScreen = ({ activeSubTab, setActiveSubTab }) => {
           </ScrollView>
         </View>
 
-        {/* İçerik */}
+        {activeSubTab === 'pazar' && (
+          <ReklamBanner position="merchant" />
+        )}
+        
+        {activeSubTab === 'goldbar' && (
+          <ReklamBanner position="goldbar" />
+        )}
+
         <View style={styles.card}>
           {activeSubTab === 'pazar' && (
             <>
               <Text style={styles.eventName}>💰 Pazar</Text>
               <Text style={styles.muted}>
-                Knight Online item pazarına tam ekran erişmek için butona tıklayın.
+                Knight Online item pazarı için aşağıdaki butona tıklayın:
               </Text>
+              
               <TouchableOpacity 
-                style={styles.fullScreenButton}
-                onPress={() => openWeb('pazar')}
+                style={styles.linkButton}
+                onPress={() => handleLinkPress('https://www.uskopazar.com', 'USKO Pazar')}
               >
-                <Text style={styles.fullScreenButtonText}>Tam Ekran Aç</Text>
+                <Text style={styles.linkButtonText}>🌐 USKO PAZAR</Text>
               </TouchableOpacity>
             </>
           )}
           
           {activeSubTab === 'goldbar' && (
             <>
-              <Text style={styles.eventName}>💎 Goldbar</Text>
+              <Text style={styles.eventName}>💎 Goldbar Fiyatları</Text>
               <Text style={styles.muted}>
-                Goldbar fiyatlarını görüntülemek için tam ekran butonuna tıklayın.
+                Knight Online sunucularındaki güncel goldbar fiyatları:
               </Text>
-              <TouchableOpacity 
-                style={styles.fullScreenButton}
-                onPress={() => openWeb('goldbar')}
-              >
-                <Text style={styles.fullScreenButtonText}>Tam Ekran Aç</Text>
-              </TouchableOpacity>
+              <GoldbarPrices />
             </>
           )}
         </View>
       </View>
-    </View>
+    </ScrollView>
   );
 };
 
 // Karakter Alt Sekmeleri
 const KarakterScreen = ({ activeSubTab, setActiveSubTab }) => {
   const karakterSubTabs = [
-    { id: 'basitAtakHesaplama', icon: '⚔️', label: 'Basit Atak' },
-    { id: 'skillHesaplama', icon: '🔮', label: 'Skill Hesapla' },
-    { id: 'charDiz', icon: '👤', label: 'Char Diz' },
+    { id: 'basitAtakHesaplama', icon: '⚔️', label: 'Basit Atak', url: 'https://www.kobugda.com/Calculator' },
+    { id: 'skillHesaplama', icon: '🔮', label: 'Skill Hesapla', url: 'https://www.kobugda.com/SkillCalculator' },
+    { id: 'charDiz', icon: '👤', label: 'Char Diz', url: 'https://www.kobugda.com/Calculator/Calculator' },
   ];
 
-  const [fullWebKey, setFullWebKey] = useState(null);
+  const [showWebView, setShowWebView] = useState(false);
+  const [webViewUrl, setWebViewUrl] = useState('');
+  const [webViewTitle, setWebViewTitle] = useState('');
 
-  const openWeb = (key) => setFullWebKey(key);
-  const closeWeb = () => setFullWebKey(null);
-
-  const WebViewTab = ({ url, title, onBack }) => {
-    const [loading, setLoading] = useState(true);
-
-    return (
-      <View style={styles.webViewContainer}>
-        <View style={styles.webViewHeader}>
-          <TouchableOpacity onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backButtonText}>⬅️ Geri</Text>
-          </TouchableOpacity>
-          <Text style={styles.webViewTitle}>{title}</Text>
-          {loading && (
-            <View style={styles.loadingContainer}>
-              <Text style={styles.loadingText}>Yükleniyor...</Text>
-            </View>
-          )}
-        </View>
-        <WebView
-          source={{ uri: url }}
-          style={styles.webView}
-          startInLoadingState={true}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          onError={() => setLoading(false)}
-          scalesPageToFit={true}
-        />
-      </View>
-    );
+  const handleLinkPress = (url, title) => {
+    setWebViewUrl(url);
+    setWebViewTitle(title);
+    setShowWebView(true);
   };
 
-  if (fullWebKey) {
-    switch(fullWebKey) {
-      case 'basitAtakHesaplama':
-        return (
-          <WebViewTab 
-            url="https://www.kobugda.com/Calculator"
-            title="⚔️ Basit Atak Hesaplama"
-            onBack={closeWeb}
-          />
-        );
-      case 'skillHesaplama':
-        return (
-          <WebViewTab 
-            url="https://www.kobugda.com/SkillCalculator"
-            title="🔮 Skill Hesaplama"
-            onBack={closeWeb}
-          />
-        );
-      case 'charDiz':
-        return (
-          <WebViewTab 
-            url="https://www.kobugda.com/Calculator/Calculator"
-            title="👤 Char Diz"
-            onBack={closeWeb}
-          />
-        );
-      default:
-        return null;
-    }
+  if (showWebView) {
+    return (
+      <WebViewScreen 
+        url={webViewUrl}
+        title={webViewTitle}
+        onBack={() => setShowWebView(false)}
+      />
+    );
   }
 
   return (
-    <View style={styles.screen}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
       <View style={styles.tabContent}>
         <Text style={styles.homeTitle}>👤 Karakter</Text>
         
-        {/* GÜNCELLENMİŞ ALT SEKMELER - Master gibi */}
         <View style={styles.enhancedSubTabContainer}>
           <ScrollView 
             horizontal 
@@ -2826,19 +5677,31 @@ const KarakterScreen = ({ activeSubTab, setActiveSubTab }) => {
           </ScrollView>
         </View>
 
-        {/* İçerik */}
+        {activeSubTab === 'basitAtakHesaplama' && (
+          <ReklamBanner position="karakter" />
+        )}
+        
+        {activeSubTab === 'skillHesaplama' && (
+          <ReklamBanner position="skill" />
+        )}
+        
+        {activeSubTab === 'charDiz' && (
+          <ReklamBanner position="chardiz" />
+        )}
+
         <View style={styles.card}>
           {activeSubTab === 'basitAtakHesaplama' && (
             <>
               <Text style={styles.eventName}>⚔️ Basit Atak Hesaplama</Text>
               <Text style={styles.muted}>
-                Karakterinizin basit atak değerlerini hesaplamak için tam ekran butonuna tıklayın.
+                Karakterinizin basit atak değerlerini hesaplamak için aşağıdaki butona tıklayın:
               </Text>
+              
               <TouchableOpacity 
-                style={styles.fullScreenButton}
-                onPress={() => openWeb('basitAtakHesaplama')}
+                style={styles.linkButton}
+                onPress={() => handleLinkPress('https://www.kobugda.com/Calculator', 'Basit Atak Hesaplama')}
               >
-                <Text style={styles.fullScreenButtonText}>Tam Ekran Aç</Text>
+                <Text style={styles.linkButtonText}>⚔️ Basit Atak Hesaplama </Text>
               </TouchableOpacity>
             </>
           )}
@@ -2847,13 +5710,14 @@ const KarakterScreen = ({ activeSubTab, setActiveSubTab }) => {
             <>
               <Text style={styles.eventName}>🔮 Skill Hesaplama</Text>
               <Text style={styles.muted}>
-                Skill puanlarınızı hesaplamak ve dağıtmak için tam ekran butonuna tıklayın.
+                Skill puanlarınızı hesaplamak ve dağıtmak için aşağıdaki butona tıklayın:
               </Text>
+              
               <TouchableOpacity 
-                style={styles.fullScreenButton}
-                onPress={() => openWeb('skillHesaplama')}
+                style={styles.linkButton}
+                onPress={() => handleLinkPress('https://www.kobugda.com/SkillCalculator', 'Skill Hesaplama')}
               >
-                <Text style={styles.fullScreenButtonText}>Tam Ekran Aç</Text>
+                <Text style={styles.linkButtonText}>🔮 Skill Hesaplama </Text>
               </TouchableOpacity>
             </>
           )}
@@ -2862,84 +5726,433 @@ const KarakterScreen = ({ activeSubTab, setActiveSubTab }) => {
             <>
               <Text style={styles.eventName}>👤 Char Diz</Text>
               <Text style={styles.muted}>
-                Karakterinizi optimize etmek için char diz aracını kullanın.
+                Karakterinizi optimize etmek için char diz aracını kullanmak için aşağıdaki butona tıklayın:
               </Text>
+              
               <TouchableOpacity 
-                style={styles.fullScreenButton}
-                onPress={() => openWeb('charDiz')}
+                style={styles.linkButton}
+                onPress={() => handleLinkPress('https://www.kobugda.com/Calculator/Calculator', 'Char Diz')}
               >
-                <Text style={styles.fullScreenButtonText}>Tam Ekran Aç</Text>
+                <Text style={styles.linkButtonText}>👤 Char Diz</Text>
               </TouchableOpacity>
             </>
           )}
         </View>
       </View>
+    </ScrollView>
+  );
+};
+
+// REHBER BİLEŞENİ
+const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [masterSubTab, setMasterSubTab] = useState('master'); // Master alt sekmesi
+  const [alSkillStatSubTab, setAlSkillStatSubTab] = useState('skillstat'); // AL Skill Stat alt sekmesi (varsayılan: Skill-Stat)
+
+  // Ana menü sekmeleri
+  const mainMenuItems = [
+    { id: 'master', icon: '⚔️', label: 'Master', hasSubMenu: true },
+    { id: 'alskillstat', icon: '📈', label: 'Skil/Stat/Exp', hasSubMenu: true },
+    { id: 'gorevler', icon: '📋', label: 'Görevler', hasSubMenu: false },
+    { id: 'achievements', icon: '🏆', label: 'Achievements', hasSubMenu: false },
+    { id: 'farm', icon: '💰', label: 'Farm Geliri Hesapla', hasSubMenu: false },
+    { id: 'monster', icon: '👹', label: 'Knight Online Monster', hasSubMenu: false },
+  ];
+
+  // Master alt sekmeleri
+  const masterSubTabs = [
+    { id: 'master', icon: '⚔️', label: 'Master' },
+    { id: 'masterSkill', icon: '🔮', label: 'Master Skill' },
+  ];
+
+  // AL Skill Stat alt sekmeleri
+  const alSkillStatSubTabs = [
+    { id: 'skillstat', icon: '📊', label: 'Skill-Stat' },
+    { id: 'alskillstat', icon: '📈', label: 'Levele Göre Exp' },
+    { id: 'rebirth', icon: '🔄', label: 'Rebirth Sistemi 83/1-15' },
+  ];
+
+  const renderContent = () => {
+    // Eğer master sekmesi veya masterSkill seçiliyse, alt sekme içeriğini göster
+    if (activeSubTab === 'master' || activeSubTab === 'masterSkill') {
+      // activeSubTab değerine göre içerik göster
+      if (activeSubTab === 'masterSkill') {
+        return <MasterSkillScreen />;
+      } else if (activeSubTab === 'master' || masterSubTab === 'master') {
+        return <MasterScreen />;
+      }
+    }
+
+    // Eğer AL Skill Stat, Skill-Stat veya Rebirth sekmesi seçiliyse, alt sekme içeriğini göster
+    if (activeSubTab === 'alskillstat' || activeSubTab === 'skillstat' || activeSubTab === 'rebirth') {
+      if (activeSubTab === 'skillstat') {
+        return <SkillStatResetScreen />;
+      } else if (activeSubTab === 'alskillstat') {
+        return <ALSkillStatScreen />;
+      } else if (activeSubTab === 'rebirth') {
+        return <RebirthSystemScreen />;
+      }
+    }
+
+    // Diğer sekmeler
+    switch(activeSubTab) {
+      case 'gorevler': 
+        return <GorevlerScreen />;
+      case 'achievements':
+        return <AchievementsScreen />;
+      case 'farm':
+        return <FarmGeliriScreen />;
+      case 'monster':
+        return <MonsterScreen />;
+      default:
+        // Varsayılan: Hoş geldin mesajı
+        return (
+          <ScrollView style={styles.screen} contentContainerStyle={styles.rehberWelcomeContent}>
+            <View style={styles.rehberWelcomeContainer}>
+              <View style={styles.rehberWelcomeCard}>
+                <Text style={styles.rehberWelcomeTitle}>📚 Rehber</Text>
+                <Text style={styles.rehberWelcomeText}>
+                  Aradığınız rehbere sol üstte bulunan menüden ulaşabilirsiniz.
+                </Text>
+              </View>
+            </View>
+          </ScrollView>
+        );
+    }
+  };
+
+  // İçerik seçili mi kontrol et
+  const hasContentSelected = activeSubTab !== null && activeSubTab !== undefined;
+
+  return (
+    <View style={{flex: 1}}>
+      {/* Hamburger Menü Butonu veya Geri Butonu - Sol Üst */}
+      {hasContentSelected ? (
+        // İçerik seçildiyse geri butonu göster
+        <TouchableOpacity 
+          style={styles.backButtonRehber}
+          onPress={() => {
+            setActiveSubTab(null);
+            setMasterSubTab('master'); // Master alt sekmesini sıfırla
+            setAlSkillStatSubTab('alskillstat'); // AL Skill Stat alt sekmesini sıfırla
+            setMenuVisible(false);
+          }}
+        >
+          <Text style={styles.backButtonTextRehber}>← Geri</Text>
+        </TouchableOpacity>
+      ) : (
+        // İçerik seçilmediyse hamburger menü göster
+        <TouchableOpacity 
+          style={styles.hamburgerButton}
+          onPress={() => setMenuVisible(!menuVisible)}
+        >
+          <View style={styles.hamburgerIcon}>
+            <View style={[styles.hamburgerLine, menuVisible && styles.hamburgerLineActive]} />
+            <View style={[styles.hamburgerLine, menuVisible && styles.hamburgerLineActive]} />
+            <View style={[styles.hamburgerLine, menuVisible && styles.hamburgerLineActive]} />
+          </View>
+        </TouchableOpacity>
+      )}
+
+      {/* Hamburger Menü - Slide Menu */}
+      {menuVisible && (
+        <View style={styles.menuOverlay}>
+          <TouchableOpacity 
+            style={styles.menuBackdrop}
+            onPress={() => setMenuVisible(false)}
+            activeOpacity={1}
+          />
+          <View style={styles.menuDrawer}>
+            <View style={styles.menuHeader}>
+              <Text style={styles.menuTitle}>📚 Rehber Menüsü</Text>
+              <TouchableOpacity onPress={() => setMenuVisible(false)}>
+                <Text style={styles.menuCloseButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.menuContent}>
+              {mainMenuItems.map((item) => (
+                <View key={item.id}>
+                  <TouchableOpacity
+                    style={[
+                      styles.menuItem,
+                      (activeSubTab === item.id || (item.id === 'master' && (activeSubTab === 'master' || activeSubTab === 'masterSkill')) || (item.id === 'alskillstat' && (activeSubTab === 'skillstat' || activeSubTab === 'alskillstat' || activeSubTab === 'rebirth'))) && styles.menuItemActive
+                    ]}
+                    onPress={() => {
+                      if (item.id === 'master') {
+                        setActiveSubTab('master');
+                        setMasterSubTab('master'); // Varsayılan alt sekme
+                      } else if (item.id === 'alskillstat') {
+                        setActiveSubTab('skillstat'); // Varsayılan olarak Skill-Stat'i göster
+                        setAlSkillStatSubTab('skillstat'); // Varsayılan alt sekme
+                      } else {
+                        setActiveSubTab(item.id);
+                      }
+                      setMenuVisible(false);
+                    }}
+                  >
+                    <Text style={styles.menuItemIcon}>{item.icon}</Text>
+                    <Text style={[
+                      styles.menuItemText,
+                      activeSubTab === item.id && styles.menuItemTextActive
+                    ]}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Master alt sekmeleri - sadece master seçiliyse ve menü açıksa göster */}
+                  {item.id === 'master' && (activeSubTab === 'master' || activeSubTab === 'masterSkill') && (
+                    <View style={styles.subMenuContainer}>
+                      {masterSubTabs.map((subTab) => (
+                        <TouchableOpacity
+                          key={subTab.id}
+                          style={[
+                            styles.subMenuItem,
+                            (masterSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemActive
+                          ]}
+                          onPress={() => {
+                            setMasterSubTab(subTab.id);
+                            setActiveSubTab(subTab.id);
+                            setMenuVisible(false);
+                          }}
+                        >
+                          <Text style={styles.subMenuItemIcon}>{subTab.icon}</Text>
+                          <Text style={[
+                            styles.subMenuItemText,
+                            (masterSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemTextActive
+                          ]}>
+                            {subTab.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* AL Skill Stat alt sekmeleri - sadece alskillstat seçiliyse ve menü açıksa göster */}
+                  {item.id === 'alskillstat' && (activeSubTab === 'skillstat' || activeSubTab === 'alskillstat' || activeSubTab === 'rebirth') && (
+                    <View style={styles.subMenuContainer}>
+                      {alSkillStatSubTabs.map((subTab) => (
+                        <TouchableOpacity
+                          key={subTab.id}
+                          style={[
+                            styles.subMenuItem,
+                            (alSkillStatSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemActive
+                          ]}
+                          onPress={() => {
+                            setAlSkillStatSubTab(subTab.id);
+                            setActiveSubTab(subTab.id);
+                            setMenuVisible(false);
+                          }}
+                        >
+                          <Text style={styles.subMenuItemIcon}>{subTab.icon}</Text>
+                          <Text style={[
+                            styles.subMenuItemText,
+                            (alSkillStatSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemTextActive
+                          ]}>
+                            {subTab.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      )}
+
+      {/* Master alt sekmeleri - Master seçiliyse göster */}
+      {(activeSubTab === 'master' || activeSubTab === 'masterSkill') && (
+        <View style={styles.masterSubTabContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.masterSubTabContent}
+          >
+            {masterSubTabs.map((tab) => (
+              <TouchableOpacity 
+                key={tab.id}
+                style={[
+                  styles.masterSubTabButton,
+                  masterSubTab === tab.id && styles.masterSubTabButtonActive
+                ]}
+                onPress={() => {
+                  setMasterSubTab(tab.id);
+                  setActiveSubTab(tab.id);
+                }}
+              >
+                <Text style={[
+                  styles.masterSubTabIcon,
+                  masterSubTab === tab.id && styles.masterSubTabIconActive
+                ]}>
+                  {tab.icon}
+                </Text>
+                <Text style={[
+                  styles.masterSubTabText,
+                  masterSubTab === tab.id && styles.masterSubTabTextActive
+                ]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* AL Skill Stat alt sekmeleri - AL Skill Stat, Skill-Stat veya Rebirth seçiliyse göster */}
+      {(activeSubTab === 'alskillstat' || activeSubTab === 'skillstat' || activeSubTab === 'rebirth') && (
+        <View style={styles.masterSubTabContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.masterSubTabContent}
+          >
+            {alSkillStatSubTabs.map((tab) => (
+              <TouchableOpacity 
+                key={tab.id}
+                style={[
+                  styles.masterSubTabButton,
+                  alSkillStatSubTab === tab.id && styles.masterSubTabButtonActive
+                ]}
+                onPress={() => {
+                  setAlSkillStatSubTab(tab.id);
+                  setActiveSubTab(tab.id);
+                }}
+              >
+                <Text style={[
+                  styles.masterSubTabIcon,
+                  alSkillStatSubTab === tab.id && styles.masterSubTabIconActive
+                ]}>
+                  {tab.icon}
+                </Text>
+                <Text style={[
+                  styles.masterSubTabText,
+                  alSkillStatSubTab === tab.id && styles.masterSubTabTextActive
+                ]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* İçerik */}
+      <View style={styles.rehberContentContainer}>
+        {renderContent()}
+      </View>
     </View>
   );
 };
 
-// YENİ REHBER BİLEŞENİ - TAMAMEN YENİLENDİ
-const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
-  const rehberSubTabs = [
-    { id: 'master', icon: '⚔️', label: 'Master' },
-    { id: 'masterSkill', icon: '🔮', label: 'Master Skill' },
-    { id: 'skillstat', icon: '📊', label: 'Skill-Stat' },
-    { id: 'gorevler', icon: '📋', label: 'Görevler' },
-    { id: 'achievements', icon: '🏆', label: 'Achievements' },
-  ];
+// API Base URL
+const API_BASE_URL = 'https://knightrehberapi.vercel.app/api';
 
-  // İçeriği doğrudan render et
-  const renderContent = () => {
-    switch(activeSubTab) {
-      case 'master': return <MasterScreen />;
-      case 'masterSkill': return <MasterSkillScreen />;
-      case 'skillstat': return <SkillStatResetScreen />;
-      case 'gorevler': return <GorevlerScreen />;
-      case 'achievements': return <AchievementsScreen />;
-      default: return <MasterScreen />;
+// Güncelleme Notları Bileşeni
+const GuncellemeNotlariScreen = () => {
+  const [updateNotes, setUpdateNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetchUpdateNotes();
+  }, []);
+
+  const fetchUpdateNotes = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await fetch(`${API_BASE_URL}/guncelleme-notlari`);
+      
+      if (!response.ok) {
+        throw new Error('Güncelleme notları yüklenemedi');
+      }
+      
+      const data = await response.json();
+      setUpdateNotes(data || []);
+    } catch (err) {
+      console.error('Güncelleme notları hatası:', err);
+      setError('Güncelleme notları yüklenirken bir hata oluştu');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('tr-TR', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch {
+      return dateString;
     }
   };
 
   return (
-    <View style={{flex: 1}}>
-      {/* Geliştirilmiş Alt Sekme Menüsü */}
-      <View style={styles.enhancedSubTabContainer}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-          contentContainerStyle={styles.enhancedSubTabContent}
-        >
-          {rehberSubTabs.map((tab) => (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+      <View style={styles.tabContent}>
+        <Text style={styles.homeTitle}>📝 Güncelleme Notları</Text>
+        
+        {loading ? (
+          <View style={styles.card}>
+            <Text style={styles.muted}>Güncelleme notları yükleniyor...</Text>
+          </View>
+        ) : error ? (
+          <View style={styles.card}>
+            <Text style={[styles.muted, { color: '#FF6B6B' }]}>{error}</Text>
             <TouchableOpacity 
-              key={tab.id}
-              style={[
-                styles.enhancedSubTabButton,
-                activeSubTab === tab.id && styles.enhancedSubTabButtonActive
-              ]}
-              onPress={() => setActiveSubTab(tab.id)}
+              style={[styles.linkButton, { marginTop: 15 }]}
+              onPress={fetchUpdateNotes}
             >
-              <Text style={[
-                styles.enhancedSubTabIcon,
-                activeSubTab === tab.id && styles.enhancedSubTabIconActive
-              ]}>
-                {tab.icon}
-              </Text>
-              <Text style={[
-                styles.enhancedSubTabText,
-                activeSubTab === tab.id && styles.enhancedSubTabTextActive
-              ]}>
-                {tab.label}
-              </Text>
+              <Text style={styles.linkButtonText}>🔄 Tekrar Dene</Text>
             </TouchableOpacity>
-          ))}
-        </ScrollView>
+          </View>
+        ) : updateNotes.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.eventName}>📢 Henüz Güncelleme Notu Yok</Text>
+            <Text style={styles.muted}>
+              Güncelleme notları yakında eklenecek.
+            </Text>
+          </View>
+        ) : (
+          updateNotes.map((note, index) => (
+            <View key={note.id || index} style={styles.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                <Text style={[
+                  styles.eventName, 
+                  note.importance === 'yuksek' && { color: '#FF6B6B' }
+                ]}>
+                  {note.importance === 'yuksek' ? '❗ ' : '📢 '}
+                  {note.title || 'Güncelleme Notu'}
+                </Text>
+                {note.date || note.created_at ? (
+                  <Text style={[styles.muted, { fontSize: 12 }]}>
+                    {formatDate(note.date || note.created_at)}
+                  </Text>
+                ) : null}
+              </View>
+              
+              {note.imageUrl ? (
+                <Image 
+                  source={{ uri: note.imageUrl }}
+                  style={{ width: '100%', height: 200, borderRadius: 8, marginBottom: 10 }}
+                  resizeMode="cover"
+                />
+              ) : null}
+              
+              <Text style={styles.muted}>
+                {note.content || 'İçerik bulunamadı'}
+              </Text>
+            </View>
+          ))
+        )}
       </View>
-
-      {/* İçerik */}
-      <View style={{flex: 1}}>
-        {renderContent()}
-      </View>
-    </View>
+    </ScrollView>
   );
 };
 
@@ -2952,328 +6165,63 @@ function MainApp() {
     acceptDisclaimer,
     disclaimerAccepted,
     isLoading,
-    appStatus,
-    checkAppStatus,
-    registerPushToken
   } = auth;
 
   const [splashVisible, setSplashVisible] = useState(true);
   const [activeTab, setActiveTab] = useState('anasayfa');
   const [activeMerchantSubTab, setActiveMerchantSubTab] = useState('pazar');
   const [activeKarakterSubTab, setActiveKarakterSubTab] = useState('basitAtakHesaplama');
-  const [activeRehberSubTab, setActiveRehberSubTab] = useState('master');
+  const [activeRehberSubTab, setActiveRehberSubTab] = useState(null); // Başlangıçta null - hoş geldin mesajı göster
   const [settingsVisible, setSettingsVisible] = useState(false);
 
-  // Düzeltilmiş alarm sistemini kullan
-  const { alarms, alarmType, toggleAlarm } = useAlarmSystem();
-
-  // Knight Online Etkinlikleri - GÜNCELLENMİŞ
-  const etkinlikler = [
-    {
-      id: 'bdw',
-      name: 'BDW - Border Defense War',
-      times: ['13:00', '19:00', '02:00'],
-      description: 'Sınır Savunma Savaşı'
-    },
-    {
-      id: 'chaos',
-      name: 'Chaos',
-      times: ['00:00', '12:00'],
-      description: 'Kaos Savaşı'
-    },
-    {
-      id: 'juraid',
-      name: 'Juraid Mountain (JR)',
-      times: ['07:40', '22:40'],
-      description: 'Juraid Dağı Etkinliği'
-    },
-    {
-      id: 'bifrost',
-      name: 'Bifrost',
-      times: ['14:00', '21:00', '02:00'],
-      description: 'Bifrost Savaşı'
-    },
-    {
-      id: 'krowaz',
-      name: 'Krowaz',
-      times: ['10:00', '21:00'],
-      description: 'Krowaz Etkinliği'
-    },
-    {
-      id: 'lunar',
-      name: 'Lunar War',
-      times: ['14:00', '20:00'],
-      description: 'Ay Savaşı (Pazartesi & Cumartesi)',
-      days: ['Pazartesi', 'Cumartesi']
-    },
-    {
-      id: 'csw',
-      name: 'Castle Siege War (CSW)',
-      times: ['20:30'],
-      description: 'Kale Kuşatma Savaşı (Pazar)',
-      days: ['Pazar']
-    },
-    {
-      id: 'utc',
-      name: 'Under the Castle (UTC)',
-      times: ['21:00'],
-      description: 'Kale Altı Savaşı (Sadece Cuma)',
-      days: ['Cuma']
-    },
-    {
-      id: 'ultima',
-      name: 'Ultima',
-      times: ['10:00', '21:30'],
-      description: 'Ultima Etkinliği'
-    },
-    {
-      id: 'steam_bdw',
-      name: 'SteamKO BDW',
-      times: ['01:00', '07:00', '12:00', '16:00', '20:00'],
-      description: 'SteamKO Border Defense War'
-    },
-    {
-      id: 'steam_chaos',
-      name: 'SteamKO Chaos',
-      times: ['10:00', '14:00', '22:00'],
-      description: 'SteamKO Chaos Savaşı'
-    },
-    {
-      id: 'steam_jr',
-      name: 'SteamKO JR',
-      times: ['02:40', '13:40'],
-      description: 'SteamKO Juraid Mountain'
-    },
-    {
-      id: 'steam_ft',
-      name: 'SteamKO Forgotten Temple (FT)',
-      times: ['08:00', '23:00'],
-      description: 'SteamKO Unutulmuş Tapınak'
-    },
-    // YENİ EKLENEN ALARMLAR
-    {
-      id: 'felankor_esland',
-      name: 'Felankor - Esland Boss',
-      times: ['09:00', '17:00', '23:30'],
-      description: 'Felankor ve Esland Boss Spawn'
-    },
-    {
-      id: 'draki_kulesi',
-      name: 'Draki Kulesi',
-      times: ['01:00', '04:00'],
-      description: 'Draki giriş hakkı ve görev sıfırlama'
-    },
-    {
-      id: 'knight_royale',
-      name: 'Knight Royale',
-      times: ['16:00', '21:30'],
-      description: 'Knight Royale Etkinliği'
-    },
-    {
-      id: 'full_moon_rift',
-      name: 'Full Moon Rift',
-      times: ['04:00'],
-      description: 'Full Moon Rift giriş hakkı sıfırlama'
-    },
-    {
-      id: 'twisted_moradon',
-      name: 'Twisted Moradon (Zombi)',
-      times: ['16:00', '21:30'],
-      description: 'Twisted Moradon Zombi Etkinliği'
-    },
-    {
-      id: 'manesin_arenasi',
-      name: 'Manesin Arenası',
-      times: ['16:00', '21:30'],
-      description: 'Manesin Arenası Etkinliği'
-    },
-  ];
-
-  // Push bildirimlerini ayarla
+  // Farm durumunu kontrol et ve eğer çalışıyorsa direkt Farm sekmesine yönlendir
   useEffect(() => {
-    const setupPushNotifications = async () => {
+    const checkFarmState = async () => {
       try {
-        const { status: existingStatus } = await Notifications.getPermissionsAsync();
-        let finalStatus = existingStatus;
-        
-        if (existingStatus !== 'granted') {
-          const { status } = await Notifications.requestPermissionsAsync();
-          finalStatus = status;
-        }
-        
-        if (finalStatus === 'granted') {
-          const token = (await Notifications.getExpoPushTokenAsync()).data;
-          await registerPushToken(token);
-          console.log('Push notification token kaydedildi:', token);
+        const savedState = await AsyncStorage.getItem('farmState');
+        if (savedState) {
+          const state = JSON.parse(savedState);
+          const savedStartTime = new Date(state.startTime);
+          const now = new Date();
+          const elapsed = Math.floor((now - savedStartTime) / 1000);
+          
+          // Eğer 1 saatlik modda ve süre dolmuşsa, durumu temizle
+          if (state.mode === '1hour' && elapsed >= 3600) {
+            await AsyncStorage.removeItem('farmState');
+            return;
+          }
+          
+          // Farm çalışıyorsa direkt Farm sekmesine yönlendir
+          setActiveTab('rehber');
+          setActiveRehberSubTab('farm');
         }
       } catch (error) {
-        console.log('Push notification ayarlanırken hata:', error);
+        console.error('Farm durumu kontrol edilemedi:', error);
       }
     };
-
-    setupPushNotifications();
-  }, []);
-
-  // Uygulama durumunu periyodik olarak kontrol et
-  useEffect(() => {
-    const interval = setInterval(() => {
-      checkAppStatus();
-    }, 30 * 60 * 1000); // 30 dakikada bir
-
-    return () => clearInterval(interval);
-  }, []);
-
-  // Uygulama bakım modunda mı kontrol et
-  useEffect(() => {
-    if (appStatus.maintenance) {
-      Alert.alert(
-        'Bakım Modu',
-        'Uygulama şu anda bakım modundadır. Lütfen daha sonra tekrar deneyin.',
-        [{ text: 'Tamam' }]
-      );
-    }
     
-    if (appStatus.status === 'banned') {
-      Alert.alert(
-        'Uygulama Engellendi',
-        'Bu uygulama kullanımdan kaldırılmıştır.',
-        [{ text: 'Tamam', onPress: () => {} }]
-      );
-    }
-  }, [appStatus]);
+    checkFarmState();
+  }, []);
 
-  // Alarm ekranı
-  const AlarmScreen = () => {
-    return (
-      <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
-        <View style={styles.tabContent}>
-          <Text style={styles.homeTitle}>⏰ Knight Online Etkinlikleri</Text>
-          <Text style={styles.alarmInfo}>
-            🔔 Alarmlar etkinlikten 5 dakika önce ve tam zamanında bildirim gönderir.
-          </Text>
-
-          <View style={styles.card}>
-            {etkinlikler.map((etkinlik) => (
-              <View key={etkinlik.id} style={styles.etkinlikItem}>
-                <View style={styles.etkinlikHeader}>
-                  <View style={styles.etkinlikInfo}>
-                    <Text style={styles.etkinlikName}>{etkinlik.name}</Text>
-                    <Text style={styles.etkinlikDescription}>{etkinlik.description}</Text>
-                    {etkinlik.days && (
-                      <Text style={styles.etkinlikDays}>📅 {etkinlik.days.join(', ')}</Text>
-                    )}
-                  </View>
-                  <Switch
-                    value={alarms[etkinlik.id]?.active || false}
-                    onValueChange={() => toggleAlarm(etkinlik.id, etkinlik)}
-                    trackColor={{ false: '#475467', true: '#FFD66B' }}
-                    thumbColor={alarms[etkinlik.id]?.active ? '#0B0B0B' : '#f4f3f4'}
-                  />
-                </View>
-                <Text style={styles.etkinlikTime}>🕐 Saatler: {etkinlik.times.join(' - ')}</Text>
-                <Text style={[
-                  styles.alarmStatus,
-                  { color: alarms[etkinlik.id]?.active ? '#FFD66B' : '#8E97A8' }
-                ]}>
-                  {alarms[etkinlik.id]?.active ?
-                    `✅ Alarm Aktif (5dk önce & tam zamanında)` :
-                    '❌ Alarm Kapalı'
-                  }
-                </Text>
-                {alarms[etkinlik.id]?.active && (
-                  <Text style={styles.alarmDetail}>
-                    ⚙️ Son ayarlanma: {new Date(alarms[etkinlik.id]?.lastScheduled).toLocaleString('tr-TR')}
-                  </Text>
-                )}
-              </View>
-            ))}
-          </View>
-        </View>
-      </ScrollView>
-    );
-  };
-
-  // Ana sayfa içeriği
-  const AnasayfaScreen = () => {
-    const aktifAlarmlar = etkinlikler.filter(etkinlik => alarms[etkinlik.id]?.active);
-
-    return (
-      <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 100 }}>
-        <View style={styles.tabContent}>
-          <Text style={styles.homeTitle}>🏠 Hoş Geldiniz, {user?.username || 'Kullanıcı'}!</Text>
-
-          {/* Uygulama Durumu */}
-          {appStatus.maintenance && (
-            <View style={[styles.infoBox, { backgroundColor: 'rgba(255, 107, 107, 0.1)', borderLeftColor: '#FF6B6B' }]}>
-              <Text style={[styles.infoText, { color: '#FF6B6B' }]}>
-                ⚠️ Uygulama bakım modunda. Bazı özellikler kısıtlanmış olabilir.
-              </Text>
-            </View>
-          )}
-
-          {/* Alarm Tipi Bilgisi */}
-          <View style={styles.infoBox}>
-            <Text style={styles.infoText}>
-              🔔 Alarm durumu: <Text style={{fontWeight: 'bold', color: '#FFD66B'}}>
-                Bildirim gönderilir
-              </Text>
-            </Text>
-            <Text style={[styles.infoText, {fontSize: 12, marginTop: 5}]}>
-              Etkinliklerden 5 dakika önce ve tam zamanında bildirim alırsınız
-            </Text>
-          </View>
-
-          {/* WhatsApp Çekiliş Kutusu */}
-          <CekilisKutusu />
-
-          {/* Dinamik Güncelleme Notları */}
-          <GuncellemeNotlariKutusu />
-
-          {/* Sadece Aktif Alarmlar Bölümü */}
-          {aktifAlarmlar.length > 0 && (
-            <View style={styles.card}>
-              <Text style={styles.eventName}>⏰ Aktif Alarmlarım</Text>
-              {aktifAlarmlar.map((etkinlik) => (
-                <View key={etkinlik.id} style={styles.etkinlikItem}>
-                  <View style={styles.etkinlikHeader}>
-                    <View style={styles.etkinlikInfo}>
-                      <Text style={styles.etkinlikName}>{etkinlik.name}</Text>
-                      <Text style={styles.etkinlikDescription}>{etkinlik.description}</Text>
-                      {etkinlik.days && (
-                        <Text style={styles.etkinlikDays}>📅 {etkinlik.days.join(', ')}</Text>
-                      )}
-                    </View>
-                  </View>
-                  <Text style={styles.etkinlikTime}>🕐 Saatler: {etkinlik.times.join(' - ')}</Text>
-                  <Text style={[styles.alarmStatus, { color: '#FFD66B' }]}>
-                    ✅ Alarm Aktif (5dk önce & tam zamanında)
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Diğer içerikler */}
-          <View style={styles.card}>
-            <Text style={styles.eventName}>🎯 Knight Rehber'e Hoş Geldiniz</Text>
-            <Text style={styles.muted}>
-              Knight Online için kapsamlı rehber uygulaması. Etkinlik alarmları, merchant fiyatları, skill hesaplamaları ve daha fazlası!
-            </Text>
-          </View>
-        </View>
-      </ScrollView>
-    );
-  };
-
-  // Sekmeler
-  const allTabs = [
+  // ✅ ÖNEMLİ: Tüm hook'lar early return'lerden ÖNCE olmalı (React Hooks kuralları)
+  // ✅ PERFORMANS: allTabs useMemo ile önbellekleniyor (sadece veri, JSX değil)
+  const allTabs = useMemo(() => [
     { id: 'anasayfa', icon: '🏠', label: 'Anasayfa' },
     { id: 'alarm', icon: '⏰', label: 'Alarm' },
+    { id: 'guncellemeNotlari', icon: '📝', label: 'Güncelleme Notları' },
     { id: 'merchant', icon: '💰', label: 'Merchant' },
     { id: 'karakter', icon: '👤', label: 'Karakter' },
     { id: 'rehber', icon: '📚', label: 'Rehber' },
-    { id: 'nostalji', icon: '📸', label: 'Nostalji' },
-  ];
+  ], []); // Sadece bir kez oluştur
+
+  // ✅ PERFORMANS: Event handler'lar useCallback ile önbellekleniyor
+  const handleOpenSettings = useCallback(() => {
+    setSettingsVisible(true);
+  }, []);
+
+  const handleCloseSettings = useCallback(() => {
+    setSettingsVisible(false);
+  }, []);
 
   // Splash screen efekti
   useEffect(() => {
@@ -3285,11 +6233,7 @@ function MainApp() {
     }
   }, [splashVisible]);
 
-  // Bildirim kanalını kur
-  useEffect(() => {
-    setupNotificationChannel();
-  }, []);
-
+  // ✅ Early return'ler hook'lardan SONRA olmalı
   if (splashVisible) {
     return <SplashScreen />;
   }
@@ -3298,20 +6242,6 @@ function MainApp() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: "#07070C", justifyContent: 'center', alignItems: 'center' }}>
         <Text style={{ color: '#FFD66B', fontSize: 18 }}>Yükleniyor...</Text>
-      </SafeAreaView>
-    );
-  }
-
-  // Uygulama banlıysa
-  if (appStatus.status === 'banned') {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: "#07070C", justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-        <Text style={{ color: '#FF6B6B', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 20 }}>
-          ⚠️ Uygulama Engellendi
-        </Text>
-        <Text style={{ color: '#8E97A8', fontSize: 16, textAlign: 'center' }}>
-          Bu uygulama kullanımdan kaldırılmıştır.
-        </Text>
       </SafeAreaView>
     );
   }
@@ -3326,12 +6256,50 @@ function MainApp() {
     );
   }
 
+  // ✅ DÜZELTME: Component'ler useMemo içinde olmamalı (React Hooks kuralları)
+  // Normal component fonksiyonu olarak tanımla
+  const AnasayfaScreen = () => {
+    return (
+      <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.tabContent}>
+          <Text style={styles.homeTitle}>🏠 Hoş Geldiniz!</Text>
+
+          <View style={styles.card}>
+            <Text style={styles.eventName}>🎯 Knight Rehber'e Hoş Geldiniz</Text>
+            <Text style={styles.muted}>
+              Knight Online için kapsamlı rehber uygulaması. Etkinlik saatleri, merchant fiyatları, skill hesaplamaları ve daha fazlası!
+            </Text>
+          </View>
+
+          <ReklamBanner position="home" />
+          
+          <TouchableOpacity 
+            style={styles.reklamBanner} 
+            onPress={() => {
+              Linking.openURL('mailto:advertknightrehber@gmail.com?subject=Reklam İşbirliği&body=Merhaba, Knight Rehber uygulamasında reklam vermek istiyorum.').catch(err => 
+                Alert.alert('Hata', 'E-posta uygulaması açılamadı.')
+              );
+            }}
+          >
+            <Text style={styles.reklamTitle}>📧 Bize Ulaşmak İçin Tıklayın</Text>
+            <Text style={styles.reklamCta}>advertknightrehber@gmail.com</Text>
+          </TouchableOpacity>
+
+          <CekilisKutusu />
+        </View>
+      </ScrollView>
+    );
+  };
+
+  // ✅ DÜZELTME: renderContent normal fonksiyon (useMemo içinde JSX döndürmek hook sırasını bozuyor)
   const renderContent = () => {
     switch(activeTab) {
       case 'anasayfa':
         return <AnasayfaScreen />;
       case 'alarm':
         return <AlarmScreen />;
+      case 'guncellemeNotlari':
+        return <GuncellemeNotlariScreen />;
       case 'merchant':
         return <MerchantScreen 
           activeSubTab={activeMerchantSubTab} 
@@ -3347,8 +6315,6 @@ function MainApp() {
           activeSubTab={activeRehberSubTab} 
           setActiveSubTab={setActiveRehberSubTab} 
         />;
-      case 'nostalji':
-        return <KnightNostaljiScreen />;
       default:
         return <AnasayfaScreen />;
     }
@@ -3358,15 +6324,12 @@ function MainApp() {
     <SafeAreaView style={styles.container}>
       <StatusBar backgroundColor="#07070C" barStyle="light-content" />
 
-      {/* Header */}
-      <Header onOpenSettings={() => setSettingsVisible(true)} />
+      <Header onOpenSettings={handleOpenSettings} />
 
-      {/* Main Content */}
       <View style={styles.content}>
         {renderContent()}
       </View>
 
-      {/* Bottom Navigation */}
       <View style={styles.bottomNav}>
         {allTabs.map((tab) => (
           <TouchableOpacity
@@ -3393,10 +6356,9 @@ function MainApp() {
         ))}
       </View>
 
-      {/* Modals */}
       <SettingsModal
         visible={settingsVisible}
-        onClose={() => setSettingsVisible(false)}
+        onClose={handleCloseSettings}
       />
     </SafeAreaView>
   );
@@ -3415,7 +6377,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#07070C',
   },
+  scrollContent: {
+    paddingBottom: 100,
+  },
   tabContent: {
+    flex: 1,
     padding: 16,
   },
   header: {
@@ -3432,6 +6398,9 @@ const styles = StyleSheet.create({
     color: '#FFD66B',
     fontSize: 20,
     fontWeight: 'bold',
+  },
+  headerPlaceholder: {
+    width: 60,
   },
   settingsWrap: {
     padding: 8,
@@ -3497,6 +6466,120 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: '#2D3748',
+  },
+  // Debug Kontrol Stilleri
+  debugControls: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    gap: 10,
+  },
+  debugButton: {
+    flex: 1,
+    padding: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  debugButtonText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  statusText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  statusActive: {
+    color: '#25D366',
+  },
+  statusInactive: {
+    color: '#FF6B6B',
+  },
+  statusDetail: {
+    color: '#8E97A8',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  // Reklam Banner Stilleri
+  reklamBannerContainer: {
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#1A1D24',
+    borderWidth: 1,
+    borderColor: '#2D3748',
+  },
+  reklamBannerImage: {
+    width: '100%',
+    height: 150,
+    backgroundColor: 'transparent',
+  },
+  reklamPlaceholder: {
+    backgroundColor: 'rgba(255, 214, 107, 0.1)',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 16,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFD66B',
+    borderStyle: 'dashed',
+  },
+  reklamPlaceholderIcon: {
+    fontSize: 32,
+    marginBottom: 8,
+  },
+  reklamPlaceholderText: {
+    color: '#FFD66B',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  reklamPlaceholderSubtext: {
+    color: '#8E97A8',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  reklamBannerWrapper: {
+    width: '100%',
+  },
+  reklamBanner: {
+    backgroundColor: '#FFD66B',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFA726',
+  },
+  reklamTitle: {
+    color: '#0B0B0B',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  reklamCta: {
+    color: '#0B0B0B',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  // Link Button
+  linkButton: {
+    backgroundColor: '#2D3748',
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#475467',
+    alignItems: 'center',
+  },
+  linkButtonText: {
+    color: '#FFD66B',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
   // Geliştirilmiş Alt Sekme Stilleri
   enhancedSubTabContainer: {
@@ -3586,66 +6669,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 4,
   },
-  // Güncelleme Notları Stilleri
-  guncellemeCard: {
-    backgroundColor: '#1A1D24',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#2D3748',
-  },
-  guncellemeHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  guncellemeTitle: {
-    color: '#FFD66B',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  refreshButton: {
-    fontSize: 20,
-    color: '#FFD66B',
-    padding: 5,
-  },
-  guncellemeItem: {
-    backgroundColor: '#2D3748',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-  },
-  guncellemeTarih: {
-    color: '#FFD66B',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  guncellemeOnem: {
-    fontSize: 14,
-  },
-  guncellemeOnemYuksek: {
-    color: '#FF6B6B',
-  },
-  guncellemeBaslik: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  guncellemeOzet: {
-    color: '#8E97A8',
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  lastUpdateText: {
-    color: '#8E97A8',
-    fontSize: 10,
-    textAlign: 'center',
-    marginTop: 8,
-    fontStyle: 'italic',
-  },
   eventName: {
     color: '#FFD66B',
     fontSize: 18,
@@ -3668,6 +6691,7 @@ const styles = StyleSheet.create({
   infoText: {
     color: '#FFD66B',
     fontSize: 14,
+    marginBottom: 4,
   },
   etkinlikItem: {
     backgroundColor: '#2D3748',
@@ -3694,40 +6718,16 @@ const styles = StyleSheet.create({
     color: '#8E97A8',
     fontSize: 12,
   },
-  etkinlikDays: {
-    color: '#FFD66B',
-    fontSize: 11,
-    marginTop: 2,
-  },
   etkinlikTime: {
     color: '#8E97A8',
     fontSize: 14,
     marginBottom: 4,
   },
-  alarmStatus: {
+  etkinlikDays: {
+    color: '#FFD66B',
     fontSize: 12,
-    fontWeight: '500',
-  },
-  alarmDetail: {
-    color: '#8E97A8',
-    fontSize: 10,
-    marginTop: 2,
-  },
-  alarmInfo: {
-    color: '#8E97A8',
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 16,
-    padding: 12,
-    backgroundColor: 'rgba(255, 214, 107, 0.1)',
-    borderRadius: 8,
-  },
-  // Nostalji Header
-  nostaljiHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   // Modal Styles
   modalBackdrop: {
@@ -3755,6 +6755,31 @@ const styles = StyleSheet.create({
     color: '#FFD66B',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Settings Tabs
+  settingsTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#2D3748',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+  },
+  settingsTab: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  settingsTabActive: {
+    backgroundColor: '#FFD66B',
+  },
+  settingsTabText: {
+    color: '#8E97A8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  settingsTabTextActive: {
+    color: '#0B0B0B',
   },
   avatarImage: {
     width: 80,
@@ -3818,26 +6843,17 @@ const styles = StyleSheet.create({
     color: '#8E97A8',
     fontSize: 12,
   },
-  alarmTypeContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#2D3748',
+  permissionButton: {
+    backgroundColor: '#FF6B6B',
+    padding: 12,
     borderRadius: 8,
-    padding: 4,
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 16,
   },
-  alarmTypeButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  alarmTypeButtonActive: {
-    backgroundColor: '#FFD66B',
-  },
-  alarmTypeText: {
-    fontSize: 12,
-    color: '#8E97A8',
-  },
-  alarmTypeTextActive: {
-    color: '#0B0B0B',
+  permissionButtonText: {
+    color: 'white',
+    fontSize: 14,
     fontWeight: 'bold',
   },
   disclaimerSetting: {
@@ -3861,21 +6877,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#475467',
   },
-  quickContactButtons: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8,
-  },
-  contactButton: {
-    flex: 1,
+  contactButtonFull: {
     backgroundColor: '#2D3748',
-    padding: 12,
-    borderRadius: 8,
+    padding: 16,
+    borderRadius: 12,
     alignItems: 'center',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#475467',
   },
   contactButtonText: {
     color: '#FFD66B',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '500',
   },
   modalButtons: {
@@ -4237,279 +7250,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  // Nostalji Styles
-  nostaljiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  nostaljiImageContainer: {
-    width: '48%',
-    marginBottom: 16,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#2D3748',
-  },
-  nostaljiImage: {
-    width: '100%',
-    height: 120,
-  },
-  nostaljiImageInfo: {
-    padding: 8,
-  },
-  nostaljiImageTitle: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-  },
-  navButtonLeft: {
-    position: 'absolute',
-    left: 20,
-    zIndex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navButtonRight: {
-    position: 'absolute',
-    right: 20,
-    zIndex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navButtonText: {
-    color: 'white',
-    fontSize: 30,
-    fontWeight: 'bold',
-  },
-  fullScreenImageTouchable: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imageInfoOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    padding: 20,
-    paddingBottom: 40,
-  },
-  fullImageTitle: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  imageCounter: {
-    color: '#8E97A8',
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  nostaljiWatermark: {
-    color: '#FFD66B',
-    fontSize: 12,
-    textAlign: 'center',
-    fontStyle: 'italic',
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 40,
-    right: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  // WebView Styles
-  webViewContainer: {
-    flex: 1,
-  },
-  webViewHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    backgroundColor: '#1A1D24',
-    borderBottomWidth: 1,
-    borderBottomColor: '#2D3748',
-  },
-  webViewTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-    flex: 1,
-    textAlign: 'center',
-  },
-  loadingContainer: {
-    padding: 5,
-  },
-  loadingText: {
-    color: '#FFD66B',
-    fontSize: 12,
-  },
-  webView: {
-    flex: 1,
-  },
-  fullScreenButton: {
-    backgroundColor: '#FFD66B',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  fullScreenButtonText: {
-    color: '#0B0B0B',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  // Sub Tab Styles
-  subTabMenu: {
-    marginBottom: 16,
-  },
-  subTabMenuContent: {
-    paddingHorizontal: 4,
-  },
-  subTabButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#2D3748',
-    marginHorizontal: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  activeSubTab: {
-    backgroundColor: '#FFD66B',
-  },
-  subTabIcon: {
-    fontSize: 14,
-    marginRight: 6,
-    color: '#8E97A8',
-  },
-  activeSubTabIcon: {
-    color: '#0B0B0B',
-  },
-  subTabText: {
-    color: '#8E97A8',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  activeSubTabText: {
-    color: '#0B0B0B',
-  },
-  // Görevler Styles
-  filterContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  filterTitle: {
-    color: '#FFD66B',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  gorevSayisi: {
-    color: '#8E97A8',
-    fontSize: 14,
-  },
-  levelButtonsContainer: {
-    marginBottom: 16,
-  },
-  levelButton: {
-    backgroundColor: '#2D3748',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 8,
-  },
-  levelButtonActive: {
-    backgroundColor: '#FFD66B',
-  },
-  levelButtonText: {
-    color: '#8E97A8',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  levelButtonTextActive: {
-    color: '#0B0B0B',
-  },
-  searchContainer: {
-    marginBottom: 16,
-  },
-  searchInput: {
-    backgroundColor: '#2D3748',
-    color: 'white',
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: '#475467',
-  },
-  gorevListesi: {
-    flex: 1,
-  },
-  gorevItem: {
-    backgroundColor: '#2D3748',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-  },
-  gorevHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  gorevSeviye: {
-    color: '#0B0B0B',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  gorevBaslik: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
-    flex: 1,
-  },
-  gorevNpc: {
-    color: '#FFD66B',
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  gorevAciklama: {
-    color: '#8E97A8',
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  gorevOdul: {
-    color: '#8E97A8',
-    fontSize: 12,
-    fontWeight: '500',
-  },
   // Disclaimer Styles
   disclaimerContainer: {
     flex: 1,
@@ -4556,18 +7296,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   
-  // ... diğer stiller
-
-  screen: {
-    flex: 1,
-    backgroundColor: '#0F1117',
-  },
-  tabContent: {
-    flex: 1,
-    padding: 16,
-  },
-
-  // Görevler için özel stiller
+  // GÖREVLER İÇİN STİLLER
   filterHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -4586,9 +7315,6 @@ const styles = StyleSheet.create({
   levelButtonsContainer: {
     maxHeight: 50,
     marginBottom: 12,
-  },
-  levelButtonsContent: {
-    paddingHorizontal: 4,
   },
   levelButton: {
     paddingHorizontal: 16,
@@ -4625,12 +7351,6 @@ const styles = StyleSheet.create({
   },
   gorevListContainer: {
     flex: 1,
-  },
-  gorevListesi: {
-    flex: 1,
-  },
-  gorevListContent: {
-    paddingBottom: 20,
   },
   gorevItem: {
     backgroundColor: '#1A1D26',
@@ -4679,23 +7399,366 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  
-
-  // YENİ EKLENECEK STİLLER - GÜNCELLENMİŞ ALT SEKMELER İÇİN
-  enhancedSubTabContainer: {
-    backgroundColor: '#1D2939',
-    borderBottomWidth: 1,
-    borderBottomColor: '#344054',
+  noResults: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  noResultsText: {
+    color: '#8E97A8',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  // WebView Styles
+  webview: {
+    flex: 1,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  sectionTitle: {
+    color: '#FFD66B',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  // Modal Stilleri
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#1A1D24',
+    borderRadius: 20,
+    padding: 20,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    borderWidth: 1,
+    borderColor: '#2D3748',
+  },
+  modalTitle: {
+    color: '#FFD66B',
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    flex: 1,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  cancelButton: {
+    backgroundColor: '#2D3748',
+  },
+  // Gün Seçimi Stilleri
+  daysContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  dayButton: {
+    flex: 1,
+    minWidth: '30%',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#2D3748',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#3e3e3e',
+  },
+  dayButtonSelected: {
+    backgroundColor: '#FFD66B',
+    borderColor: '#FFD66B',
+  },
+  dayButtonText: {
+    color: '#8E97A8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  dayButtonTextSelected: {
+    color: '#07070C',
+    fontWeight: 'bold',
+  },
+  // Etkinlik Seçimi Stilleri
+  eventSelector: {
+    marginBottom: 16,
+  },
+  eventList: {
+    maxHeight: 200,
+    marginTop: 8,
+  },
+  eventOption: {
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#2D3748',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#3e3e3e',
+  },
+  eventOptionSelected: {
+    backgroundColor: '#FFD66B',
+    borderColor: '#FFD66B',
+  },
+  eventOptionName: {
+    color: '#FFD66B',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  eventOptionNameSelected: {
+    color: '#07070C',
+  },
+  eventOptionDescription: {
+    color: '#8E97A8',
+    fontSize: 12,
+  },
+  eventOptionDescriptionSelected: {
+    color: '#07070C',
+  },
+  eventOptionTime: {
+    color: '#8E97A8',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  eventOptionTimeSelected: {
+    color: '#07070C',
+  },
+  // Switch Container
+  switchContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
     paddingVertical: 8,
   },
-  enhancedSubTabContent: {
-    paddingHorizontal: 16,
-    alignItems: 'center',
+  switchLabel: {
+    color: '#FFD66B',
+    fontSize: 16,
+    fontWeight: '600',
   },
-  enhancedSubTabButton: {
+  // Label
+  label: {
+    color: '#FFD66B',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+    marginTop: 8,
+  },
+  // Input
+  input: {
+    backgroundColor: '#2D3748',
+    borderWidth: 1,
+    borderColor: '#475467',
+    borderRadius: 12,
+    padding: 14,
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  // Button
+  button: {
+    backgroundColor: '#FFD66B',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Button Text
+  buttonText: {
+    color: '#07070C',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // Hamburger Menu Styles
+  hamburgerButton: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    zIndex: 1000,
+    backgroundColor: '#1A1D24',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#2D3748',
+  },
+  hamburgerIcon: {
+    width: 24,
+    height: 18,
+    justifyContent: 'space-between',
+  },
+  hamburgerLine: {
+    height: 3,
+    backgroundColor: '#FFD66B',
+    borderRadius: 2,
+    width: '100%',
+    marginBottom: 3,
+  },
+  hamburgerLineActive: {
+    backgroundColor: '#f39c12',
+  },
+  menuOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 999,
+    flexDirection: 'row',
+  },
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  menuDrawer: {
+    width: 280,
+    backgroundColor: '#1A1D24',
+    borderRightWidth: 1,
+    borderRightColor: '#2D3748',
+    shadowColor: '#000',
+    shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  menuHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2D3748',
+    backgroundColor: '#0B0B0B',
+  },
+  menuTitle: {
+    color: '#FFD66B',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  menuCloseButton: {
+    color: '#8E97A8',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  menuContent: {
+    flex: 1,
+  },
+  menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#344054',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2D3748',
+  },
+  menuItemActive: {
+    backgroundColor: '#2D3748',
+    borderLeftWidth: 4,
+    borderLeftColor: '#FFD66B',
+  },
+  menuItemIcon: {
+    fontSize: 20,
+    marginRight: 12,
+  },
+  menuItemText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  menuItemTextActive: {
+    color: '#FFD66B',
+    fontWeight: 'bold',
+  },
+  subMenuContainer: {
+    backgroundColor: '#0B0B0B',
+    paddingLeft: 20,
+  },
+  subMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    paddingLeft: 40,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2D3748',
+  },
+  subMenuItemActive: {
+    backgroundColor: '#2D3748',
+    borderLeftWidth: 3,
+    borderLeftColor: '#FFD66B',
+  },
+  subMenuItemIcon: {
+    fontSize: 16,
+    marginRight: 10,
+  },
+  subMenuItemText: {
+    color: '#8E97A8',
+    fontSize: 14,
+  },
+  subMenuItemTextActive: {
+    color: '#FFD66B',
+    fontWeight: '600',
+  },
+  // Back Button Rehber
+  backButtonRehber: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    zIndex: 1000,
+    backgroundColor: '#1A1D24',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#2D3748',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  backButtonTextRehber: {
+    color: '#FFD66B',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  // Master Sub Tab Styles
+  masterSubTabContainer: {
+    backgroundColor: '#0B0B0B',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1D24',
+    paddingVertical: 8,
+    marginTop: 70, // Geri butonunun altına (buton yüksekliği + padding)
+  },
+  masterSubTabContent: {
+    paddingHorizontal: 8,
+  },
+  masterSubTabButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1D24',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
@@ -4703,77 +7766,444 @@ const styles = StyleSheet.create({
     minWidth: 100,
     justifyContent: 'center',
   },
-  enhancedSubTabButtonActive: {
+  masterSubTabButtonActive: {
     backgroundColor: '#FFD66B',
   },
-  enhancedSubTabIcon: {
+  masterSubTabIcon: {
     fontSize: 16,
+    color: '#8E97A8',
     marginRight: 6,
-    color: '#98A2B3',
   },
-  enhancedSubTabIconActive: {
+  masterSubTabIconActive: {
     color: '#0B0B0B',
   },
-  enhancedSubTabText: {
+  masterSubTabText: {
+    color: '#8E97A8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  masterSubTabTextActive: {
+    color: '#0B0B0B',
+  },
+  // Rehber Welcome Styles
+  rehberWelcomeContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingTop: 60, // Hamburger butonunun altına yer açmak için
+  },
+  rehberWelcomeContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  rehberWelcomeCard: {
+    backgroundColor: '#1A1D24',
+    borderRadius: 16,
+    padding: 32,
+    borderWidth: 1,
+    borderColor: '#2D3748',
+    width: '100%',
+    maxWidth: 400,
+    alignItems: 'center',
+  },
+  rehberWelcomeTitle: {
+    color: '#FFD66B',
+    fontSize: 32,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  rehberWelcomeText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    textAlign: 'center',
+    lineHeight: 26,
+    fontWeight: '500',
+  },
+  rehberContentContainer: {
+    flex: 1,
+    paddingTop: 0, // İçerik alanı için padding
+  },
+  // Levele Göre Exp Table Styles
+  expTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#2D3748',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#475467',
+  },
+  expTableHeaderText: {
+    color: '#FFD66B',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginHorizontal: 2,
+  },
+  expTableRow: {
+    flexDirection: 'row',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2D3748',
+    minHeight: 32,
+  },
+  expTableCell: {
+    color: 'white',
+    fontSize: 11,
+    textAlign: 'center',
+    marginHorizontal: 2,
+  },
+  // Goldbar Table Styles
+  gbTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#2D3748',
+    padding: 10,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#475467',
+  },
+  gbTableHeaderText: {
+    color: '#FFD66B',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginHorizontal: 2,
+  },
+  gbTableRow: {
+    flexDirection: 'row',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2D3748',
+    alignItems: 'center',
+  },
+  gbTableCell: {
+    color: 'white',
+    fontSize: 11,
+    textAlign: 'center',
+    marginHorizontal: 2,
+  },
+  // Farm Geliri Hesapla Styles
+  inputContainer: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    color: '#FFD66B',
     fontSize: 14,
     fontWeight: '600',
-    color: '#98A2B3',
+    marginBottom: 8,
   },
-  enhancedSubTabTextActive: {
+  input: {
+    backgroundColor: '#2D3748',
+    borderRadius: 8,
+    padding: 12,
+    color: 'white',
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#475467',
+  },
+  modeSelector: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1D24',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+  },
+  modeButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modeButtonActive: {
+    backgroundColor: '#FFD66B',
+  },
+  modeButtonText: {
+    color: '#8E97A8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modeButtonTextActive: {
     color: '#0B0B0B',
   },
-
-  // WebView için stiller
-  webViewContainer: {
-    flex: 1,
-    backgroundColor: '#07070C',
-  },
-  webViewHeader: {
-    flexDirection: 'row',
+  timerContainer: {
     alignItems: 'center',
-    backgroundColor: '#1D2939',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#344054',
+    padding: 20,
+    backgroundColor: '#1A1D24',
+    borderRadius: 12,
+    marginBottom: 16,
   },
-  webViewTitle: {
+  timerText: {
+    color: '#FFD66B',
+    fontSize: 48,
+    fontWeight: 'bold',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  timerLabel: {
+    color: '#8E97A8',
+    fontSize: 14,
+    marginTop: 8,
+  },
+  controlButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  controlButton: {
     flex: 1,
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  startButton: {
+    backgroundColor: '#6BCF7F',
+  },
+  stopButton: {
+    backgroundColor: '#FF6B6B',
+  },
+  resetButton: {
+    backgroundColor: '#8E97A8',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  controlButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#1A1D24',
+    borderRadius: 16,
+    padding: 20,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '90%',
+    borderWidth: 1,
+    borderColor: '#2D3748',
+  },
+  modalTitle: {
+    color: '#FFD66B',
+    fontSize: 24,
+    fontWeight: 'bold',
     textAlign: 'center',
-    marginLeft: -40, // Geri butonunu dengelemek için
+    marginBottom: 8,
   },
-  webView: {
-    flex: 1,
+  modalSubtitle: {
+    color: '#8E97A8',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
   },
-  loadingContainer: {
-    position: 'absolute',
-    right: 16,
+  modalScroll: {
+    maxHeight: 500,
   },
-  loadingText: {
-    color: '#98A2B3',
-    fontSize: 12,
-  },
-
-  // Tam ekran butonu
-  fullScreenButton: {
+  calculateButton: {
     backgroundColor: '#FFD66B',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    padding: 16,
     borderRadius: 8,
     alignItems: 'center',
     marginTop: 16,
+    marginBottom: 12,
   },
-  fullScreenButtonText: {
+  calculateButtonText: {
     color: '#0B0B0B',
     fontSize: 16,
+    fontWeight: 'bold',
+  },
+  closeButton: {
+    backgroundColor: '#8E97A8',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    color: 'white',
+    fontSize: 14,
     fontWeight: '600',
   },
+  resultContainer: {
+    backgroundColor: '#0B0B0B',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  resultTitle: {
+    color: '#FFD66B',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  resultItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2D3748',
+  },
+  resultLabel: {
+    color: '#8E97A8',
+    fontSize: 14,
+    flex: 1,
+  },
+  resultValue: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'right',
+    flex: 1,
+  },
+  resultValuePositive: {
+    color: '#6BCF7F',
+  },
+  resultValueNegative: {
+    color: '#FF6B6B',
+  },
+  resultValueLarge: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  resultDivider: {
+    height: 1,
+    backgroundColor: '#2D3748',
+    marginVertical: 12,
+  },
+  labelWithInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    width: '100%',
+  },
+  infoButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFD66B',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+    padding: 0,
+    minWidth: 32,
+    minHeight: 32,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
+  },
+  infoButtonText: {
+    color: '#0B0B0B',
+    fontSize: 18,
+    fontWeight: 'bold',
+    lineHeight: 20,
+  },
+  infoModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  infoModalContent: {
+    backgroundColor: '#1A1D24',
+    borderRadius: 16,
+    padding: 24,
+    minWidth: 250,
+    maxWidth: 350,
+    borderWidth: 1,
+    borderColor: '#2D3748',
+    alignItems: 'center',
+  },
+  infoModalText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  infoModalCloseButton: {
+    backgroundColor: '#FFD66B',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  infoModalCloseButtonText: {
+    color: '#0B0B0B',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // Monster Screen Styles
+  monsterTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#2D3748',
+    padding: 12,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    marginBottom: 2,
+  },
+  monsterTableHeaderText: {
+    color: '#FFD66B',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  monsterTableRow: {
+    flexDirection: 'row',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2D3748',
+  },
+  monsterTableCell: {
+    color: 'white',
+    fontSize: 11,
+    textAlign: 'center',
+    paddingHorizontal: 4,
+  },
+  emptyState: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    color: '#8E97A8',
+    fontSize: 16,
+  },
+  monsterZoneButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#2D3748',
+    marginRight: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#3A4553',
+  },
+  monsterZoneButtonActive: {
+    backgroundColor: '#FFD66B',
+    borderColor: '#FFD66B',
+  },
+  monsterZoneButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  monsterZoneButtonTextActive: {
+    color: '#0B0B0B',
+    fontWeight: 'bold',
+  },
 });
-
-
 
 export default function App() {
   return (
