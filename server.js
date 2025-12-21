@@ -4,6 +4,9 @@ const path = require('path');
 const { MongoClient } = require('mongodb');
 const https = require('https');
 const http = require('http');
+// Node.js 18+ built-in fetch kullanılacak, yoksa node-fetch gerekir
+const fetch = globalThis.fetch || require('node-fetch');
+const fetch = require('node-fetch');
 
 const app = express();
 
@@ -151,7 +154,7 @@ app.get('/api/admin/mongo-status', async (req, res) => {
         console.error('❌ MongoDB token okuma hatası:', error.message);
       }
     }
-    
+
     res.json({
       hasMongoUri: hasEnv,
       isConnected: isMongoConnected,
@@ -181,14 +184,14 @@ app.get('/api/admin/stats', async (req, res) => {
     tokenCount = userTokens.length; // Fallback
   }
   
-  res.json({
-    totalUsers: 0,
-    activeUsers: 0,
+    res.json({
+      totalUsers: 0,
+      activeUsers: 0,
     sentNotifications: bildirimler.length,
     usersWithPushToken: tokenCount,
-    appVersion: '1.0.0',
-    appStatus: 'active'
-  });
+      appVersion: '1.0.0',
+      appStatus: 'active'
+    });
 });
 
 // Push token kaydet
@@ -398,7 +401,7 @@ app.get('/api/guncelleme-notlari', (req, res) => {
 });
 
 // Görsel Proxy - ImageBB ve diğer servisler için (Vercel serverless için optimize)
-app.get('/api/image-proxy', (req, res) => {
+app.get('/api/image-proxy', async (req, res) => {
   const imageUrl = decodeURIComponent(req.query.url || '');
   
   if (!imageUrl) {
@@ -415,6 +418,83 @@ app.get('/api/image-proxy', (req, res) => {
       return res.status(400).json({ error: 'Sadece HTTP ve HTTPS URL\'leri desteklenir' });
     }
     
+    // Imgur album linklerini handle et
+    if (imageUrl.includes('imgur.com/a/')) {
+      try {
+        // Album sayfasını fetch et
+        const albumResponse = await fetch(imageUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        
+        if (!albumResponse.ok) {
+          throw new Error(`Album sayfası yüklenemedi: ${albumResponse.status}`);
+        }
+        
+        const html = await albumResponse.text();
+        
+        // HTML'den görsel URL'ini çıkar (Imgur'un yeni formatı)
+        // <meta property="og:image" content="https://i.imgur.com/xxxxx.jpg">
+        const ogImageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
+        if (ogImageMatch && ogImageMatch[1]) {
+          const directImageUrl = ogImageMatch[1];
+          console.log('Imgur album\'den görsel bulundu:', directImageUrl);
+          
+          // Direkt görsel URL'ini proxy üzerinden aç
+          const imageResponse = await fetch(directImageUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://imgur.com/'
+            }
+          });
+          
+          if (!imageResponse.ok) {
+            throw new Error(`Görsel yüklenemedi: ${imageResponse.status}`);
+          }
+          
+          // CORS header'ları ekle
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET');
+          res.setHeader('Content-Type', imageResponse.headers.get('content-type') || 'image/jpeg');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          
+          // Görseli buffer olarak al ve gönder
+          const buffer = await imageResponse.buffer();
+          res.send(buffer);
+          return;
+        }
+        
+        // Eski format: JSON data içinde görsel URL'i
+        const jsonDataMatch = html.match(/<script[^>]*>window\._sharedData\s*=\s*({.+?});<\/script>/);
+        if (jsonDataMatch) {
+          try {
+            const data = JSON.parse(jsonDataMatch[1]);
+            const imageUrl = data?.image?.hash 
+              ? `https://i.imgur.com/${data.image.hash}.jpg`
+              : null;
+            
+            if (imageUrl) {
+              const imageResponse = await fetch(imageUrl);
+              const buffer = await imageResponse.buffer();
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Content-Type', 'image/jpeg');
+              res.send(buffer);
+              return;
+            }
+          } catch (e) {
+            console.error('JSON parse hatası:', e);
+          }
+        }
+        
+        throw new Error('Album sayfasından görsel URL\'i bulunamadı');
+      } catch (albumError) {
+        console.error('Imgur album hatası:', albumError);
+        return res.status(500).json({ error: 'Imgur album\'den görsel alınamadı: ' + albumError.message });
+      }
+    }
+    
+    // Normal görsel proxy (ImageBB, direkt Imgur görselleri vb.)
     const protocol = url.protocol === 'https:' ? https : http;
     
     const options = {
@@ -479,14 +559,24 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
           .sort({ createdAt: -1 }) // En yeni önce
           .toArray();
         if (banners && banners.length > 0) {
-          // ImageBB URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
+          // ImageBB ve Imgur album URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
           const baseUrl = `https://${req.get('host')}`;
           const bannersWithProxy = banners.map(banner => {
-            if (banner.imageUrl && banner.imageUrl.includes('ibb.co')) {
-              return {
-                ...banner,
-                imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
-              };
+            if (banner.imageUrl) {
+              // ImageBB linklerini proxy üzerinden aç
+              if (banner.imageUrl.includes('ibb.co') && !banner.imageUrl.includes('i.ibb.co')) {
+                return {
+                  ...banner,
+                  imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+                };
+              }
+              // Imgur album linklerini proxy üzerinden aç
+              if (banner.imageUrl.includes('imgur.com/a/')) {
+                return {
+                  ...banner,
+                  imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+                };
+              }
             }
             return banner;
           });
@@ -501,14 +591,24 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
     const banners = reklamBannerlar.filter(b => b.position === position && b.active);
     const sortedBanners = banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     
-    // ImageBB URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
+    // ImageBB ve Imgur album URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
     const baseUrl = `https://${req.get('host')}`;
     const bannersWithProxy = sortedBanners.map(banner => {
-      if (banner.imageUrl && banner.imageUrl.includes('ibb.co')) {
-        return {
-          ...banner,
-          imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
-        };
+      if (banner.imageUrl) {
+        // ImageBB linklerini proxy üzerinden aç
+        if (banner.imageUrl.includes('ibb.co') && !banner.imageUrl.includes('i.ibb.co')) {
+          return {
+            ...banner,
+            imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+          };
+        }
+        // Imgur album linklerini proxy üzerinden aç
+        if (banner.imageUrl.includes('imgur.com/a/')) {
+          return {
+            ...banner,
+            imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+          };
+        }
       }
       return banner;
     });
@@ -561,7 +661,7 @@ app.delete('/api/admin/banner/:id', async (req, res) => {
           console.log('✅ Banner MongoDB\'den silindi:', id);
           return res.json({ success: true, message: 'Banner silindi' });
         }
-      } catch (error) {
+  } catch (error) {
         console.error('MongoDB banner silme hatası:', error);
       }
     }
@@ -585,23 +685,25 @@ function convertImageUrl(url) {
   
   const trimmedUrl = url.trim();
   
-  // ImageBB linki: https://ibb.co/xxxxx -> direkt görsel linki önerilir
-  // ImageBB linkleri genellikle direkt görsel linki olarak kullanılmalı
+  // ImageBB linki: https://ibb.co/xxxxx -> proxy üzerinden aç
   if (trimmedUrl.includes('ibb.co')) {
     // Eğer zaten i.ibb.co formatındaysa (direkt görsel linki) olduğu gibi döndür
     if (trimmedUrl.includes('i.ibb.co')) {
       return trimmedUrl;
     }
-    // ibb.co/xxxxx formatındaysa kullanıcıya direkt görsel linki kullanmasını söyle
-    console.warn('ImageBB linki kullanıldı, direkt görsel linki önerilir:', trimmedUrl);
+    // ibb.co/xxxxx formatındaysa proxy üzerinden açılacak şekilde işaretle
+    // Bu URL'ler banner eklenirken proxy URL'ye çevrilecek
     return trimmedUrl;
   }
   
-  // Imgur album linki: https://imgur.com/a/xxxxx -> https://i.imgur.com/xxxxx.jpg
-  const albumMatch = trimmedUrl.match(/imgur\.com\/a\/([a-zA-Z0-9]+)/);
+  // Imgur album linki: https://imgur.com/a/xxxxx veya https://imgur.com/a/xxxxx.jpg
+  // Album linklerinden direkt görsel almak güvenilir değil, proxy üzerinden aç
+  const albumMatch = trimmedUrl.match(/imgur\.com\/a\/([a-zA-Z0-9]+)(\.[a-z]+)?/);
   if (albumMatch) {
     const imageId = albumMatch[1];
-    return `https://i.imgur.com/${imageId}.jpg`;
+    // Album linklerini proxy üzerinden açmak için orijinal URL'i döndür
+    // Banner eklenirken proxy URL'ye çevrilecek
+    return trimmedUrl;
   }
   
   // Imgur direkt link: https://imgur.com/xxxxx -> https://i.imgur.com/xxxxx.jpg
@@ -642,7 +744,7 @@ app.post('/api/admin/banner', async (req, res) => {
             error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
           });
         }
-      } catch (error) {
+  } catch (error) {
         console.error('MongoDB banner sayısı kontrolü hatası:', error);
       }
     } else {

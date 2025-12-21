@@ -4,6 +4,8 @@ const path = require('path');
 const { MongoClient } = require('mongodb');
 const https = require('https');
 const http = require('http');
+// Node.js 18+ built-in fetch kullanılacak, yoksa node-fetch gerekir
+const fetch = globalThis.fetch || require('node-fetch');
 
 const app = express();
 
@@ -356,7 +358,7 @@ app.get('/api/admin/users', (req, res) => {
 });
 
 // Görsel Proxy - ImageBB ve diğer servisler için (Vercel serverless için optimize)
-app.get('/api/image-proxy', (req, res) => {
+app.get('/api/image-proxy', async (req, res) => {
   const imageUrl = decodeURIComponent(req.query.url || '');
   
   if (!imageUrl) {
@@ -436,14 +438,24 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
           .sort({ createdAt: -1 }) // En yeni önce
           .toArray();
         if (banners && banners.length > 0) {
-          // ImageBB URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
+          // ImageBB ve Imgur album URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
           const baseUrl = `https://${req.get('host')}`;
           const bannersWithProxy = banners.map(banner => {
-            if (banner.imageUrl && banner.imageUrl.includes('ibb.co')) {
-              return {
-                ...banner,
-                imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
-              };
+            if (banner.imageUrl) {
+              // ImageBB linklerini proxy üzerinden aç
+              if (banner.imageUrl.includes('ibb.co') && !banner.imageUrl.includes('i.ibb.co')) {
+                return {
+                  ...banner,
+                  imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+                };
+              }
+              // Imgur album linklerini proxy üzerinden aç
+              if (banner.imageUrl.includes('imgur.com/a/')) {
+                return {
+                  ...banner,
+                  imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+                };
+              }
             }
             return banner;
           });
@@ -457,14 +469,24 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
     const banners = database.reklamBannerlar.filter(b => b.position === position && b.active);
     const sortedBanners = banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     
-    // ImageBB URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
+    // ImageBB ve Imgur album URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
     const baseUrl = `https://${req.get('host')}`;
     const bannersWithProxy = sortedBanners.map(banner => {
-      if (banner.imageUrl && banner.imageUrl.includes('ibb.co')) {
-        return {
-          ...banner,
-          imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
-        };
+      if (banner.imageUrl) {
+        // ImageBB linklerini proxy üzerinden aç
+        if (banner.imageUrl.includes('ibb.co') && !banner.imageUrl.includes('i.ibb.co')) {
+          return {
+            ...banner,
+            imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+          };
+        }
+        // Imgur album linklerini proxy üzerinden aç
+        if (banner.imageUrl.includes('imgur.com/a/')) {
+          return {
+            ...banner,
+            imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+          };
+        }
       }
       return banner;
     });
@@ -506,25 +528,25 @@ function convertImageUrl(url) {
   
   const trimmedUrl = url.trim();
   
-  // ImageBB linki: https://ibb.co/xxxxx -> https://i.ibb.co/xxxxx/xxxxx.jpg
-  // ImageBB linkleri genellikle direkt görsel linki olarak kullanılmalı
-  // Kullanıcıya direkt görsel linki kullanmasını öneriyoruz
+  // ImageBB linki: https://ibb.co/xxxxx -> proxy üzerinden aç
   if (trimmedUrl.includes('ibb.co')) {
     // Eğer zaten i.ibb.co formatındaysa (direkt görsel linki) olduğu gibi döndür
     if (trimmedUrl.includes('i.ibb.co')) {
       return trimmedUrl;
     }
-    // ibb.co/xxxxx formatındaysa kullanıcıya direkt görsel linki kullanmasını söyle
-    // Ancak API'den döndürelim, mobil uygulama error handling yapsın
-    console.warn('ImageBB linki kullanıldı, direkt görsel linki önerilir:', trimmedUrl);
+    // ibb.co/xxxxx formatındaysa proxy üzerinden açılacak şekilde işaretle
+    // Bu URL'ler banner eklenirken proxy URL'ye çevrilecek
     return trimmedUrl;
   }
   
-  // Imgur album linki: https://imgur.com/a/xxxxx -> https://i.imgur.com/xxxxx.jpg
-  const albumMatch = trimmedUrl.match(/imgur\.com\/a\/([a-zA-Z0-9]+)/);
+  // Imgur album linki: https://imgur.com/a/xxxxx veya https://imgur.com/a/xxxxx.jpg
+  // Album linklerinden direkt görsel almak güvenilir değil, proxy üzerinden aç
+  const albumMatch = trimmedUrl.match(/imgur\.com\/a\/([a-zA-Z0-9]+)(\.[a-z]+)?/);
   if (albumMatch) {
     const imageId = albumMatch[1];
-    return `https://i.imgur.com/${imageId}.jpg`;
+    // Album linklerini proxy üzerinden açmak için orijinal URL'i döndür
+    // Banner eklenirken proxy URL'ye çevrilecek
+    return trimmedUrl;
   }
   
   // Imgur direkt link: https://imgur.com/xxxxx -> https://i.imgur.com/xxxxx.jpg
