@@ -375,6 +375,83 @@ app.get('/api/image-proxy', async (req, res) => {
       return res.status(400).json({ error: 'Sadece HTTP ve HTTPS URL\'leri desteklenir' });
     }
     
+    // Imgur album linklerini handle et
+    if (imageUrl.includes('imgur.com/a/')) {
+      try {
+        // Album sayfasını fetch et
+        const albumResponse = await fetch(imageUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        
+        if (!albumResponse.ok) {
+          throw new Error(`Album sayfası yüklenemedi: ${albumResponse.status}`);
+        }
+        
+        const html = await albumResponse.text();
+        
+        // HTML'den görsel URL'ini çıkar (Imgur'un yeni formatı)
+        // <meta property="og:image" content="https://i.imgur.com/xxxxx.jpg">
+        const ogImageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
+        if (ogImageMatch && ogImageMatch[1]) {
+          const directImageUrl = ogImageMatch[1];
+          console.log('Imgur album\'den görsel bulundu:', directImageUrl);
+          
+          // Direkt görsel URL'ini proxy üzerinden aç
+          const imageResponse = await fetch(directImageUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://imgur.com/'
+            }
+          });
+          
+          if (!imageResponse.ok) {
+            throw new Error(`Görsel yüklenemedi: ${imageResponse.status}`);
+          }
+          
+          // CORS header'ları ekle
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET');
+          res.setHeader('Content-Type', imageResponse.headers.get('content-type') || 'image/jpeg');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          
+          // Görseli buffer olarak al ve gönder
+          const buffer = await imageResponse.buffer();
+          res.send(buffer);
+          return;
+        }
+        
+        // Eski format: JSON data içinde görsel URL'i
+        const jsonDataMatch = html.match(/<script[^>]*>window\._sharedData\s*=\s*({.+?});<\/script>/);
+        if (jsonDataMatch) {
+          try {
+            const data = JSON.parse(jsonDataMatch[1]);
+            const imageUrl = data?.image?.hash 
+              ? `https://i.imgur.com/${data.image.hash}.jpg`
+              : null;
+            
+            if (imageUrl) {
+              const imageResponse = await fetch(imageUrl);
+              const buffer = await imageResponse.buffer();
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Content-Type', 'image/jpeg');
+              res.send(buffer);
+              return;
+            }
+          } catch (e) {
+            console.error('JSON parse hatası:', e);
+          }
+        }
+        
+        throw new Error('Album sayfasından görsel URL\'i bulunamadı');
+      } catch (albumError) {
+        console.error('Imgur album hatası:', albumError);
+        return res.status(500).json({ error: 'Imgur album\'den görsel alınamadı: ' + albumError.message });
+      }
+    }
+    
+    // Normal görsel proxy (ImageBB, direkt Imgur görselleri vb.)
     const protocol = url.protocol === 'https:' ? https : http;
     
     const options = {
