@@ -193,9 +193,22 @@
         </select>
         
         <input type="url" id="bannerImageUrl" placeholder="📷 Banner Görsel URL'si (zorunlu - direkt görsel linki, örn: https://i.imgur.com/xxxxx.jpg)">
-        <p style="color: #8E97A8; font-size: 12px; margin: -5px 0 10px 0;">
-            ⚠️ Imgur album linki (imgur.com/a/...) veya ImageBB sayfa linki (ibb.co/...) yerine direkt görsel linki kullanın (i.imgur.com/... veya i.ibb.co/...)
-        </p>
+        <div style="background: #2D3748; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid #FFD66B;">
+            <p style="color: #FFD66B; font-size: 14px; font-weight: bold; margin: 0 0 10px 0;">📌 %100 Çalışması İçin:</p>
+            <p style="color: #8E97A8; font-size: 13px; margin: 5px 0;">
+                ✅ <strong>En İyi Yöntem (Imgur):</strong><br>
+                1. https://imgur.com adresine gidin<br>
+                2. Görselinizi yükleyin<br>
+                3. Görsele sağ tıklayıp "Resmi yeni sekmede aç" deyin<br>
+                4. Yeni sekmedeki URL'yi kopyalayın (https://i.imgur.com/xxxxx.jpg formatında olmalı)
+            </p>
+            <p style="color: #FF6B6B; font-size: 13px; margin: 5px 0;">
+                ❌ <strong>Kullanmayın:</strong><br>
+                • imgur.com/a/... (Album linki)<br>
+                • imgur.com/xxxxx (Sayfa linki)<br>
+                • ibb.co/xxxxx (ImageBB sayfa linki)
+            </p>
+        </div>
         <input type="url" id="bannerClickUrl" placeholder="🔗 Tıklama Linki (isteğe bağlı)">
         <button onclick="bannerKaydet()">💾 Banner Kaydet</button>
 
