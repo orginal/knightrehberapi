@@ -397,35 +397,69 @@ app.get('/api/guncelleme-notlari', (req, res) => {
   res.json(guncellemeler.slice(0, 10));
 });
 
-// Görsel Proxy - ImageBB ve diğer servisler için
+// Görsel Proxy - ImageBB ve diğer servisler için (Vercel serverless için optimize)
 app.get('/api/image-proxy', (req, res) => {
-  const imageUrl = req.query.url;
+  const imageUrl = decodeURIComponent(req.query.url || '');
   
   if (!imageUrl) {
     return res.status(400).json({ error: 'URL parametresi gerekli' });
   }
 
+  console.log('Proxy isteği:', imageUrl);
+
   try {
     const url = new URL(imageUrl);
+    
+    // Sadece HTTPS ve HTTP'ye izin ver
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return res.status(400).json({ error: 'Sadece HTTP ve HTTPS URL\'leri desteklenir' });
+    }
+    
     const protocol = url.protocol === 'https:' ? https : http;
     
-    protocol.get(imageUrl, (proxyRes) => {
-      // Header'ları kopyala
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+        'Referer': url.origin
+      },
+      timeout: 10000 // 10 saniye timeout
+    };
+    
+    const proxyReq = protocol.get(imageUrl, options, (proxyRes) => {
+      // CORS header'ları ekle
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET');
       res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'image/jpeg');
       res.setHeader('Cache-Control', 'public, max-age=86400'); // 1 gün cache
       
       // Status code'u kontrol et
       if (proxyRes.statusCode !== 200) {
-        return res.status(proxyRes.statusCode).json({ error: 'Görsel yüklenemedi' });
+        console.error('Proxy status code:', proxyRes.statusCode);
+        return res.status(proxyRes.statusCode).json({ error: 'Görsel yüklenemedi: ' + proxyRes.statusCode });
       }
       
       // Görseli stream et
       proxyRes.pipe(res);
-    }).on('error', (error) => {
-      console.error('Image proxy hatası:', error);
-      res.status(500).json({ error: 'Görsel proxy hatası: ' + error.message });
     });
+    
+    proxyReq.on('error', (error) => {
+      console.error('Image proxy hatası:', error.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Görsel proxy hatası: ' + error.message });
+      }
+    });
+    
+    proxyReq.on('timeout', () => {
+      console.error('Image proxy timeout');
+      proxyReq.destroy();
+      if (!res.headersSent) {
+        res.status(504).json({ error: 'Görsel yükleme zaman aşımı' });
+      }
+    });
+    
   } catch (error) {
+    console.error('URL parse hatası:', error);
     res.status(400).json({ error: 'Geçersiz URL: ' + error.message });
   }
 });
@@ -445,12 +479,13 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
           .sort({ createdAt: -1 }) // En yeni önce
           .toArray();
         if (banners && banners.length > 0) {
-          // ImageBB URL'lerini proxy URL'ye çevir
+          // ImageBB URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
+          const baseUrl = `https://${req.get('host')}`;
           const bannersWithProxy = banners.map(banner => {
             if (banner.imageUrl && banner.imageUrl.includes('ibb.co')) {
               return {
                 ...banner,
-                imageUrl: `${req.protocol}://${req.get('host')}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+                imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
               };
             }
             return banner;
@@ -466,12 +501,13 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
     const banners = reklamBannerlar.filter(b => b.position === position && b.active);
     const sortedBanners = banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     
-    // ImageBB URL'lerini proxy URL'ye çevir
+    // ImageBB URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
+    const baseUrl = `https://${req.get('host')}`;
     const bannersWithProxy = sortedBanners.map(banner => {
       if (banner.imageUrl && banner.imageUrl.includes('ibb.co')) {
         return {
           ...banner,
-          imageUrl: `${req.protocol}://${req.get('host')}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
+          imageUrl: `${baseUrl}/api/image-proxy?url=${encodeURIComponent(banner.imageUrl)}`
         };
       }
       return banner;
