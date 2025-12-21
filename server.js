@@ -4,8 +4,19 @@ const path = require('path');
 const { MongoClient } = require('mongodb');
 const https = require('https');
 const http = require('http');
-// Node.js 18+ built-in fetch kullanılacak, yoksa node-fetch gerekir
-const fetch = globalThis.fetch || require('node-fetch');
+
+// Fetch için güvenli fallback (Node.js 18+ built-in, yoksa node-fetch veya https/http kullan)
+let fetch;
+try {
+  if (globalThis.fetch) {
+    fetch = globalThis.fetch;
+  } else {
+    fetch = require('node-fetch');
+  }
+} catch (e) {
+  // node-fetch yoksa, https/http ile manuel fetch yapacağız
+  fetch = null;
+}
 const fetch = require('node-fetch');
 
 const app = express();
