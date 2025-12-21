@@ -369,12 +369,14 @@ app.post('/api/admin/send-notification', async (req, res) => {
       try {
         const tokensCollection = db.collection('push_tokens');
         const tokens = await tokensCollection.find({}).toArray();
-        tokensToSend = tokens.map(t => t.token);
-        console.log('📊 MongoDB\'den token sayısı:', tokensToSend.length);
-      } catch (mongoError) {
-        console.error('❌ MongoDB token okuma hatası:', mongoError.message);
+        tokensToSend = tokens.map(t => t.token).filter(t => t && t.trim());
+        console.log('✅ MongoDB\'den token sayısı:', tokensToSend.length);
+      } catch (error) {
+        console.error('❌ MongoDB token okuma hatası:', error.message);
+        mongoError = error.message;
         // Fallback: Memory database
-        tokensToSend = userTokens;
+        tokensToSend = userTokens.filter(t => t && t.trim());
+        console.log('📊 Fallback: Memory database\'den token sayısı:', tokensToSend.length);
       }
     } else {
       // Fallback: Memory database
