@@ -682,19 +682,30 @@ app.post('/api/admin/banner', async (req, res) => {
       updatedAt: new Date().toISOString()
     };
     
+    // MongoDB'ye kaydet (ZORUNLU - Vercel serverless için)
     if (isMongoConnected && db) {
       try {
         const bannersCollection = db.collection('reklam_bannerlar');
         await bannersCollection.insertOne(banner);
         console.log('✅ Banner MongoDB\'ye kaydedildi:', banner.position, 'Toplam:', bannerCount + 1);
+        
+        // Başarılı olduysa response döndür
+        return res.json({ success: true, message: 'Banner kaydedildi', banner, totalBanners: bannerCount + 1 });
       } catch (error) {
-        console.error('MongoDB banner kayıt hatası:', error);
+        console.error('❌ MongoDB banner kayıt hatası:', error);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Banner kaydedilemedi: ' + error.message + '. Lütfen MongoDB bağlantısını kontrol edin.' 
+        });
       }
+    } else {
+      // MongoDB bağlantısı yoksa hata döndür (Vercel'de memory database çalışmaz)
+      console.error('❌ MongoDB bağlantısı yok!');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'MongoDB bağlantısı yok. Banner kaydedilemedi. Lütfen MONGODB_URI environment variable\'ını kontrol edin.' 
+      });
     }
-    
-    database.reklamBannerlar.push(banner);
-    
-    res.json({ success: true, message: 'Banner kaydedildi', banner, totalBanners: bannerCount + 1 });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
