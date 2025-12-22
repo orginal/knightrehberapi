@@ -136,6 +136,8 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   }
 
   console.log(`📤 ${validTokens.length} cihaza bildirim gönderiliyor...`);
+  console.log(`📤 Bildirim başlığı: "${title}"`);
+  console.log(`📤 Bildirim mesajı: "${message}"`);
 
   try {
     const messages = validTokens.map(token => {
@@ -152,6 +154,9 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
     });
 
     console.log('📤 Expo Push API\'ye istek gönderiliyor...');
+    console.log('📤 Gönderilecek mesaj sayısı:', messages.length);
+    console.log('📤 İlk token (ilk 50 karakter):', validTokens[0]?.substring(0, 50) + '...');
+    
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
       headers: {
@@ -161,6 +166,9 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
       },
       body: JSON.stringify(messages),
     });
+    
+    console.log('📤 Expo Push API response status:', response.status);
+    console.log('📤 Expo Push API response ok:', response.ok);
 
     if (!response.ok) {
       const errorText = await response.text();
