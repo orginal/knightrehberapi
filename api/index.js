@@ -92,6 +92,9 @@ async function connectToMongoDB() {
 }
 
 // Basit veritabanı (Fallback)
+let bildirimler = [];
+let userTokens = []; // Fallback için (MongoDB bağlantısı yoksa)
+
 let database = {
   users: [
     {
@@ -128,17 +131,79 @@ let database = {
   reklamBannerlar: []
 };
 
-// Mock Push Notification fonksiyonu
-async function sendPushNotification(pushToken, title, message) {
-  try {
-    console.log(`📤 Mock Push Notification: ${title} - ${message}`);
-    console.log(`Token: ${pushToken}`);
+// Expo Push Notification gönderme fonksiyonu
+async function sendExpoPushNotification(pushTokens, title, message, imageUrl = null) {
+  if (!pushTokens || pushTokens.length === 0) {
+    console.log('⚠️ Push token yok, bildirim gönderilemedi');
+    return { success: 0, failed: 0, error: 'Push token bulunamadı' };
+  }
 
-    // Burada gerçek Expo, FCM vs. entegre edilebilir
-    return true;
+  // Token'ları temizle ve geçerli olanları filtrele
+  const validTokens = pushTokens
+    .map(t => String(t).trim())
+    .filter(t => t && t.startsWith('ExponentPushToken[') && t.length > 20);
+
+  if (validTokens.length === 0) {
+    console.log('⚠️ Geçerli push token yok');
+    return { success: 0, failed: 0, error: 'Geçerli push token bulunamadı' };
+  }
+
+  console.log(`📤 ${validTokens.length} cihaza bildirim gönderiliyor...`);
+
+  try {
+    const messages = validTokens.map(token => {
+      return {
+        to: token,
+        sound: 'default',
+        title: title,
+        body: message,
+        data: { title, message, ...(imageUrl && { imageUrl }) },
+        priority: 'high',
+        channelId: 'default',
+        badge: 1
+      };
+    });
+
+    console.log('📤 Expo Push API\'ye istek gönderiliyor...');
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(messages),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Expo Push API hatası:', response.status, errorText);
+      return { success: 0, failed: validTokens.length, error: `API hatası: ${response.status}` };
+    }
+
+    const result = await response.json();
+    console.log('📤 Expo Push Notification sonucu:', JSON.stringify(result, null, 2));
+
+    const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
+    const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
+    
+    // Hata detaylarını logla
+    let errorDetails = [];
+    if (failedCount > 0) {
+      const errors = result.data?.filter(r => r.status !== 'ok');
+      console.error('❌ Başarısız bildirimler:', JSON.stringify(errors, null, 2));
+      errorDetails = errors.map(e => ({
+        status: e.status,
+        message: e.message || 'Bilinmeyen hata',
+        details: e.details || null
+      }));
+    }
+
+    return { success: successCount, failed: failedCount, details: result.data, errorDetails };
   } catch (error) {
-    console.error('❌ Push notification hatası:', error);
-    return false;
+    console.error('❌ Expo Push Notification hatası:', error.message);
+    console.error('❌ Hata stack:', error.stack);
+    return { success: 0, failed: validTokens.length, error: error.message };
   }
 }
 
@@ -158,14 +223,14 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, '../admin.html'));
 });
 
-// Admin giriş (Fallback)
+// Admin giriş
 app.post('/api/admin/login', (req, res) => {
-  const { username, password } = req.body;
+  const { username, password } = req.body || {};
 
-  const adminUsername = 'Aga';
-  const adminPassword = '2312631';
+  const adminUsername = 'aga';
+  const adminPassword = 'aga251643';
 
-  if (username === adminUsername && password === adminPassword) {
+  if (String(username).trim().toLowerCase() === adminUsername.toLowerCase() && String(password).trim() === adminPassword) {
     res.json({
       success: true,
       token: 'admin-token-2024',
@@ -176,55 +241,146 @@ app.post('/api/admin/login', (req, res) => {
   }
 });
 
-// İstatistikler (Fallback)
-app.get('/api/admin/stats', (req, res) => {
-  const usersWithToken = database.users.filter(u => u.pushToken).length;
-
+// İstatistikler
+app.get('/api/admin/stats', async (req, res) => {
+  let tokenCount = 0;
+  
+  // MongoDB'den token sayısını al
+  const isMongoConnected = await connectToMongoDB();
+  if (isMongoConnected && db) {
+    try {
+      const tokensCollection = db.collection('push_tokens');
+      tokenCount = await tokensCollection.countDocuments();
+    } catch (error) {
+      console.error('❌ MongoDB token sayısı hatası:', error.message);
+      tokenCount = userTokens.length; // Fallback
+    }
+  } else {
+    tokenCount = userTokens.length; // Fallback
+  }
+  
   res.json({
-    totalUsers: database.users.length,
-    activeUsers: database.users.filter(u => {
-      const lastActive = new Date(u.lastActive);
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      return lastActive > sevenDaysAgo;
-    }).length,
-    sentNotifications: database.notifications.length,
-    usersWithPushToken: usersWithToken,
+    totalUsers: 0,
+    activeUsers: 0,
+    sentNotifications: bildirimler.length,
+    usersWithPushToken: tokenCount,
     appVersion: '1.0.0',
-    appStatus: database.appSettings.app_status
+    appStatus: 'active'
   });
 });
 
-// Bildirim gönder (Fallback)
+// Bildirim gönder
 app.post('/api/admin/send-notification', async (req, res) => {
-  const { title, message, target } = req.body;
-
-  if (!title || !message) {
-    return res.status(400).json({ error: 'Başlık ve mesaj gerekli' });
-  }
-
   try {
-    const newNotification = {
+    const { title, message, target } = req.body || {};
+
+    if (!title || !message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Başlık ve mesaj gerekli'
+      });
+    }
+
+    const bildirim = {
       id: Date.now(),
-      title,
-      message,
+      title: String(title).trim(),
+      message: String(message).trim(),
       target: target || 'all',
-      sent_count: database.users.filter(u => u.pushToken).length,
-      total_users: database.users.length,
-      failed_count: 0,
+      imageUrl: req.body.imageUrl ? String(req.body.imageUrl).trim() : null,
       created_at: new Date().toISOString()
     };
 
-    database.notifications.unshift(newNotification);
+    bildirimler.unshift(bildirim);
+    database.notifications.unshift(bildirim);
 
+    // Expo Push Notification gönder - MongoDB'den token'ları al
+    let tokensToSend = [];
+    let mongoError = null;
+    
+    // MongoDB'ye bağlanmayı dene
+    const isMongoConnected = await connectToMongoDB();
+    
+    if (isMongoConnected && db) {
+      try {
+        const tokensCollection = db.collection('push_tokens');
+        
+        // ÖNCE: Tüm token'ları al ve logla (debug için)
+        const allTokens = await tokensCollection.find({}).toArray();
+        console.log('📊 MongoDB\'de toplam token sayısı:', allTokens.length);
+        allTokens.forEach(t => {
+          console.log(`  - Token: ${t.token.substring(0, 30)}..., experienceId: ${t.experienceId || 'YOK'}`);
+        });
+        
+        // Sadece @ceylan26/knight-rehber experience ID'sine ait token'ları al
+        const tokens = await tokensCollection.find({ experienceId: '@ceylan26/knight-rehber' }).toArray();
+        tokensToSend = tokens.map(t => t.token).filter(t => t && t.trim());
+        console.log('✅ MongoDB\'den token sayısı (@ceylan26/knight-rehber):', tokensToSend.length);
+        
+        // Eski @mike0835 token'larını logla (silinebilir)
+        const oldTokens = await tokensCollection.find({ experienceId: '@mike0835/knight-rehber' }).toArray();
+        if (oldTokens.length > 0) {
+          console.log('⚠️ Eski @mike0835/knight-rehber token sayısı:', oldTokens.length, '(kullanılmıyor)');
+        }
+        
+        // ExperienceId'si null/undefined olan eski token'ları logla
+        const nullExpIdTokens = await tokensCollection.find({ 
+          $or: [
+            { experienceId: null },
+            { experienceId: { $exists: false } }
+          ]
+        }).toArray();
+        if (nullExpIdTokens.length > 0) {
+          console.log('⚠️ ExperienceId olmayan eski token sayısı:', nullExpIdTokens.length, '(kullanılmıyor)');
+        }
+      } catch (error) {
+        console.error('❌ MongoDB token okuma hatası:', error.message);
+        mongoError = error.message;
+        // Fallback: Memory database
+        tokensToSend = database.users.filter(u => u.pushToken).map(u => u.pushToken).filter(t => t && t.trim());
+        console.log('📊 Fallback: Memory database\'den token sayısı:', tokensToSend.length);
+      }
+    } else {
+      // MongoDB bağlantısı yok
+      mongoError = 'MongoDB bağlantısı yok';
+      // Fallback: Memory database
+      tokensToSend = database.users.filter(u => u.pushToken).map(u => u.pushToken).filter(t => t && t.trim());
+      console.log('📊 Fallback: Memory database\'den token sayısı:', tokensToSend.length);
+    }
+    
+    console.log('📋 Gönderilecek token listesi:', tokensToSend);
+    
+    let pushResult = { success: 0, failed: 0 };
+    if (tokensToSend.length > 0) {
+      console.log(`📤 ${tokensToSend.length} cihaza bildirim gönderiliyor...`);
+      pushResult = await sendExpoPushNotification(tokensToSend, bildirim.title, bildirim.message, bildirim.imageUrl);
+      console.log(`✅ ${pushResult.success} başarılı, ❌ ${pushResult.failed} başarısız`);
+    } else {
+      console.log('⚠️ Kayıtlı push token yok, bildirim sadece kaydedildi');
+      console.log('💡 APK\'yı açın ve bildirim izni verin, token otomatik kaydedilecek');
+    }
+
+    const errorMessage = pushResult.errorDetails && pushResult.errorDetails.length > 0
+      ? ` Hata detayları: ${pushResult.errorDetails.map(e => e.message).join(', ')}`
+      : '';
+    
     res.json({
       success: true,
-      message: `Bildirim başarıyla gönderildi!`,
-      notification: newNotification
+      message: tokensToSend.length > 0 
+        ? `Bildirim gönderildi! ${pushResult.success} cihaza ulaştı, ${pushResult.failed} başarısız.${errorMessage}`
+        : 'Bildirim kaydedildi ancak kayıtlı push token yok. APK\'yı açın ve bildirim izni verin.',
+      notification: bildirim,
+      pushStats: {
+        ...pushResult,
+        totalTokens: tokensToSend.length,
+        mongoError: mongoError || null
+      }
     });
-
   } catch (error) {
-    console.error('Bildirim gönderme hatası:', error);
-    res.status(500).json({ error: 'Bildirim gönderilirken hata oluştu' });
+    console.error('Bildirim hatası:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Hata: ' + error.message
+    });
   }
 });
 
@@ -356,6 +512,77 @@ app.post('/api/stats', (req, res) => {
   const { userId, action } = req.body;
   console.log(`📊 İstatistik: ${userId} - ${action}`);
   res.json({ success: true });
+});
+
+// Push token kaydet
+app.post('/api/push/register', async (req, res) => {
+  try {
+    const { token, experienceId } = req.body || {};
+    
+    console.log('📱 Push token kayıt isteği geldi:', token ? 'Token var' : 'Token yok');
+    console.log('📱 Experience ID:', experienceId || 'Yok');
+    
+    if (!token) {
+      console.log('❌ Token gerekli');
+      return res.status(400).json({ success: false, error: 'Token gerekli' });
+    }
+
+    const tokenStr = String(token).trim();
+    const expId = experienceId ? String(experienceId).trim() : null;
+    console.log('📝 Token uzunluğu:', tokenStr.length);
+    console.log('📝 Token formatı:', tokenStr.substring(0, 30) + '...');
+    console.log('📝 Token başlangıcı:', tokenStr.startsWith('ExponentPushToken[') ? 'Doğru' : 'Hatalı');
+    console.log('📝 Experience ID:', expId || 'Belirtilmemiş');
+    
+    // MongoDB'ye bağlanmayı dene
+    const isMongoConnected = await connectToMongoDB();
+    
+    if (isMongoConnected && db) {
+      // MongoDB'ye kaydet
+      try {
+        const tokensCollection = db.collection('push_tokens');
+        const result = await tokensCollection.updateOne(
+          { token: tokenStr },
+          { 
+            $set: { 
+              token: tokenStr,
+              experienceId: expId,
+              updatedAt: new Date(),
+              lastSeen: new Date()
+            },
+            $setOnInsert: {
+              createdAt: new Date()
+            }
+          },
+          { upsert: true }
+        );
+        
+        const totalTokens = await tokensCollection.countDocuments();
+        console.log('✅ Push token MongoDB\'ye kaydedildi. Toplam:', totalTokens);
+        res.json({ success: true, message: 'Token kaydedildi', totalTokens });
+        return;
+      } catch (mongoError) {
+        console.error('❌ MongoDB kayıt hatası:', mongoError.message);
+        // Fallback: Memory database'ye kaydet
+      }
+    }
+    
+    // Fallback: Memory database
+    console.log('📊 Mevcut token sayısı (kayıt öncesi):', userTokens.length);
+    
+    if (!userTokens.includes(tokenStr)) {
+      userTokens.push(tokenStr);
+      console.log('✅ Yeni push token memory\'ye kaydedildi. Toplam:', userTokens.length);
+    } else {
+      console.log('⚠️ Token zaten kayıtlı');
+    }
+
+    console.log('📊 Token kayıt sonrası toplam:', userTokens.length);
+    res.json({ success: true, message: 'Token kaydedildi (memory)', totalTokens: userTokens.length });
+  } catch (error) {
+    console.error('❌ Token kayıt hatası:', error);
+    res.status(500).json({ success: false, error: 'Hata: ' + error.message });
+  }
 });
 
 // Kullanıcı kaydı

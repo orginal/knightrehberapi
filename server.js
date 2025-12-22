@@ -175,12 +175,18 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
     const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
     
     // Hata detaylarını logla
+    let errorDetails = [];
     if (failedCount > 0) {
       const errors = result.data?.filter(r => r.status !== 'ok');
-      console.error('❌ Başarısız bildirimler:', errors);
+      console.error('❌ Başarısız bildirimler:', JSON.stringify(errors, null, 2));
+      errorDetails = errors.map(e => ({
+        status: e.status,
+        message: e.message || 'Bilinmeyen hata',
+        details: e.details || null
+      }));
     }
 
-    return { success: successCount, failed: failedCount, details: result.data };
+    return { success: successCount, failed: failedCount, details: result.data, errorDetails };
   } catch (error) {
     console.error('❌ Expo Push Notification hatası:', error.message);
     console.error('❌ Hata stack:', error.stack);
@@ -221,12 +227,25 @@ app.get('/api/admin/mongo-status', async (req, res) => {
     
     let tokenCount = 0;
     let tokens = [];
+    let ceylan26Count = 0;
+    let mike0835Count = 0;
+    let nullExpIdCount = 0;
     
     if (isMongoConnected && db) {
       try {
         const tokensCollection = db.collection('push_tokens');
         tokenCount = await tokensCollection.countDocuments();
-        tokens = await tokensCollection.find({}).limit(5).toArray();
+        tokens = await tokensCollection.find({}).toArray();
+        
+        // ExperienceId'ye göre say
+        ceylan26Count = await tokensCollection.countDocuments({ experienceId: '@ceylan26/knight-rehber' });
+        mike0835Count = await tokensCollection.countDocuments({ experienceId: '@mike0835/knight-rehber' });
+        nullExpIdCount = await tokensCollection.countDocuments({ 
+          $or: [
+            { experienceId: null },
+            { experienceId: { $exists: false } }
+          ]
+        });
       } catch (error) {
         console.error('❌ MongoDB token okuma hatası:', error.message);
       }
@@ -236,7 +255,14 @@ app.get('/api/admin/mongo-status', async (req, res) => {
       hasMongoUri: hasEnv,
       isConnected: isMongoConnected,
       tokenCount,
-      sampleTokens: tokens.map(t => t.token.substring(0, 20) + '...'),
+      ceylan26Count,
+      mike0835Count,
+      nullExpIdCount,
+      tokens: tokens.map(t => ({
+        token: t.token.substring(0, 30) + '...',
+        experienceId: t.experienceId || 'YOK',
+        updatedAt: t.updatedAt
+      })),
       memoryTokens: userTokens.length
     });
   } catch (error) {
@@ -274,9 +300,10 @@ app.get('/api/admin/stats', async (req, res) => {
 // Push token kaydet
 app.post('/api/push/register', async (req, res) => {
   try {
-    const { token } = req.body || {};
+    const { token, experienceId } = req.body || {};
     
     console.log('📱 Push token kayıt isteği geldi:', token ? 'Token var' : 'Token yok');
+    console.log('📱 Experience ID:', experienceId || 'Yok');
     
     if (!token) {
       console.log('❌ Token gerekli');
@@ -284,7 +311,11 @@ app.post('/api/push/register', async (req, res) => {
     }
 
     const tokenStr = String(token).trim();
+    const expId = experienceId ? String(experienceId).trim() : null;
     console.log('📝 Token uzunluğu:', tokenStr.length);
+    console.log('📝 Token formatı:', tokenStr.substring(0, 30) + '...');
+    console.log('📝 Token başlangıcı:', tokenStr.startsWith('ExponentPushToken[') ? 'Doğru' : 'Hatalı');
+    console.log('📝 Experience ID:', expId || 'Belirtilmemiş');
     
     // MongoDB'ye bağlanmayı dene
     const isMongoConnected = await connectToMongoDB();
@@ -298,6 +329,7 @@ app.post('/api/push/register', async (req, res) => {
           { 
             $set: { 
               token: tokenStr,
+              experienceId: expId,
               updatedAt: new Date(),
               lastSeen: new Date()
             },
@@ -369,9 +401,35 @@ app.post('/api/admin/send-notification', async (req, res) => {
     if (isMongoConnected && db) {
       try {
         const tokensCollection = db.collection('push_tokens');
-        const tokens = await tokensCollection.find({}).toArray();
+        
+        // ÖNCE: Tüm token'ları al ve logla (debug için)
+        const allTokens = await tokensCollection.find({}).toArray();
+        console.log('📊 MongoDB\'de toplam token sayısı:', allTokens.length);
+        allTokens.forEach(t => {
+          console.log(`  - Token: ${t.token.substring(0, 30)}..., experienceId: ${t.experienceId || 'YOK'}`);
+        });
+        
+        // Sadece @ceylan26/knight-rehber experience ID'sine ait token'ları al
+        const tokens = await tokensCollection.find({ experienceId: '@ceylan26/knight-rehber' }).toArray();
         tokensToSend = tokens.map(t => t.token).filter(t => t && t.trim());
-        console.log('✅ MongoDB\'den token sayısı:', tokensToSend.length);
+        console.log('✅ MongoDB\'den token sayısı (@ceylan26/knight-rehber):', tokensToSend.length);
+        
+        // Eski @mike0835 token'larını logla (silinebilir)
+        const oldTokens = await tokensCollection.find({ experienceId: '@mike0835/knight-rehber' }).toArray();
+        if (oldTokens.length > 0) {
+          console.log('⚠️ Eski @mike0835/knight-rehber token sayısı:', oldTokens.length, '(kullanılmıyor)');
+        }
+        
+        // ExperienceId'si null/undefined olan eski token'ları logla
+        const nullExpIdTokens = await tokensCollection.find({ 
+          $or: [
+            { experienceId: null },
+            { experienceId: { $exists: false } }
+          ]
+        }).toArray();
+        if (nullExpIdTokens.length > 0) {
+          console.log('⚠️ ExperienceId olmayan eski token sayısı:', nullExpIdTokens.length, '(kullanılmıyor)');
+        }
       } catch (error) {
         console.error('❌ MongoDB token okuma hatası:', error.message);
         mongoError = error.message;
@@ -399,10 +457,14 @@ app.post('/api/admin/send-notification', async (req, res) => {
       console.log('💡 APK\'yı açın ve bildirim izni verin, token otomatik kaydedilecek');
     }
 
+    const errorMessage = pushResult.errorDetails && pushResult.errorDetails.length > 0
+      ? ` Hata detayları: ${pushResult.errorDetails.map(e => e.message).join(', ')}`
+      : '';
+    
     res.json({
       success: true,
       message: tokensToSend.length > 0 
-        ? `Bildirim gönderildi! ${pushResult.success} cihaza ulaştı, ${pushResult.failed} başarısız.`
+        ? `Bildirim gönderildi! ${pushResult.success} cihaza ulaştı, ${pushResult.failed} başarısız.${errorMessage}`
         : 'Bildirim kaydedildi ancak kayıtlı push token yok. APK\'yı açın ve bildirim izni verin.',
       notification: bildirim,
       pushStats: {
