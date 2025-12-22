@@ -171,6 +171,17 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
     const result = await response.json();
     console.log('📤 Expo Push Notification sonucu:', JSON.stringify(result, null, 2));
 
+    // Her bir token için detaylı log
+    if (result.data && Array.isArray(result.data)) {
+      result.data.forEach((item, index) => {
+        if (item.status === 'ok') {
+          console.log(`✅ Token ${index + 1} (${validTokens[index]?.substring(0, 30)}...): OK - ${item.id || 'ID yok'}`);
+        } else {
+          console.error(`❌ Token ${index + 1} (${validTokens[index]?.substring(0, 30)}...): ${item.status} - ${item.message || 'Bilinmeyen hata'}`);
+        }
+      });
+    }
+
     const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
     const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
     
