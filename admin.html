@@ -132,9 +132,9 @@
     <div id="loginScreen" class="login-box">
         <h1>🏰 Knight Rehber</h1>
         <div id="loginAlert" class="alert"></div>
-        <input type="text" id="username" name="username" placeholder="Kullanıcı Adı" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
-        <input type="password" id="password" name="password" placeholder="Şifre" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')">
-        <button onclick="girisYap()">Giriş Yap</button>
+        <input type="text" id="username" name="username" placeholder="Kullanıcı Adı" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onkeypress="if(event.key === 'Enter') document.getElementById('password').focus()">
+        <input type="password" id="password" name="password" placeholder="Şifre" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')" onkeypress="if(event.key === 'Enter') girisYap()">
+        <button type="button" onclick="girisYap()">Giriş Yap</button>
     </div>
 
     <!-- ANA PANEL -->
