@@ -152,9 +152,14 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   console.log(`📤 Bildirim mesajı: "${message}"`);
 
   // Token'ları experienceId'ye göre grupla
+  // experienceId'si olmayan token'ları atla (farklı projelere ait olabilir, Expo hatası verir)
   const tokensByExpId = {};
   validTokens.forEach(t => {
-    const expId = t.experienceId || 'NO_EXP_ID';
+    if (!t.experienceId) {
+      console.log(`⚠️ Token atlandı (experienceId yok): ${t.token.substring(0, 30)}...`);
+      return; // experienceId olmayan token'ları atla
+    }
+    const expId = t.experienceId;
     if (!tokensByExpId[expId]) {
       tokensByExpId[expId] = [];
     }
