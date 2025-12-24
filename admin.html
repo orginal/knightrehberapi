@@ -133,8 +133,8 @@
         <h1>🏰 Knight Rehber</h1>
         <div id="loginAlert" class="alert"></div>
         <input type="text" id="username" name="username" placeholder="Kullanıcı Adı" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onkeypress="if(event.key === 'Enter') document.getElementById('password').focus()">
-        <input type="password" id="password" name="password" placeholder="Şifre" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')" onkeypress="if(event.key === 'Enter') girisYap()">
-        <button type="button" onclick="girisYap()">Giriş Yap</button>
+        <input type="password" id="password" name="password" placeholder="Şifre" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')" onkeypress="if(event.key === 'Enter') { event.preventDefault(); girisYap(); }">
+        <button type="button" id="loginButton">Giriş Yap</button>
     </div>
 
     <!-- ANA PANEL -->
@@ -333,6 +333,18 @@
     <script>
         const API_URL = window.location.origin + '/api';
         let token = '';
+
+        // Sayfa yüklendiğinde event listener'ları ekle
+        document.addEventListener('DOMContentLoaded', function() {
+            const loginButton = document.getElementById('loginButton');
+            if (loginButton) {
+                loginButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    girisYap();
+                });
+            }
+        });
 
         // Giriş yap
         async function girisYap() {
