@@ -169,6 +169,7 @@
         <!-- SEKMELER -->
         <div style="display: flex; gap: 10px; margin: 30px 0 20px 0; border-bottom: 2px solid #2D3748;">
             <button id="tabBanner" class="tab-button active" onclick="switchTab('banner')" style="flex: 1; padding: 12px; background: #FFD66B; color: #1a1a2e; border: none; border-radius: 8px 8px 0 0; font-weight: bold; cursor: pointer;">🖼️ Banner'lar</button>
+            <button id="tabPazarTaksi" class="tab-button" onclick="switchTab('pazarTaksi')" style="flex: 1; padding: 12px; background: #2D3748; color: #FFD66B; border: none; border-radius: 8px 8px 0 0; font-weight: bold; cursor: pointer;">🚕 Pazar-Taksi</button>
             <button id="tabNotification" class="tab-button" onclick="switchTab('notification')" style="flex: 1; padding: 12px; background: #2D3748; color: #FFD66B; border: none; border-radius: 8px 8px 0 0; font-weight: bold; cursor: pointer;">📢 Bildirimler</button>
             <button id="tabUpdate" class="tab-button" onclick="switchTab('update')" style="flex: 1; padding: 12px; background: #2D3748; color: #FFD66B; border: none; border-radius: 8px 8px 0 0; font-weight: bold; cursor: pointer;">📝 Güncelleme Notları</button>
         </div>
@@ -177,7 +178,7 @@
         <div id="tabContentBanner" class="tab-content">
         <h2 style="color: #FFD66B; margin: 30px 0 20px 0;">🖼️ Reklam Banner Yönetimi</h2>
         <p style="color: #8E97A8; margin-bottom: 20px; font-size: 14px;">
-            Pazar-Taksi bölümü için maksimum 20 banner, diğer pozisyonlar için maksimum 10 banner ekleyebilirsiniz. Mobil uygulamada tüm aktif banner'lar sırayla alt alta gösterilir.
+            Her pozisyon için maksimum 10 banner ekleyebilirsiniz. Mobil uygulamada tüm aktif banner'lar sırayla alt alta gösterilir.
         </p>
         
         <div id="bannerAlert" class="alert"></div>
@@ -190,42 +191,6 @@
             <option value="karakter">👤 Karakter Sekmesi (Basit Atak Hesapla)</option>
             <option value="skill">⚔️ Skill Hesapla</option>
             <option value="chardiz">📐 Char Diz</option>
-            <optgroup label="🚕 Pazar-Taksi - Zero">
-                <option value="pazar-taksi-zero-pazarcilar">🛒 Zero - Pazarcılar</option>
-                <option value="pazar-taksi-zero-taksi">🚕 Zero - Taksi Hizmeti</option>
-            </optgroup>
-            <optgroup label="🚕 Pazar-Taksi - Agartha">
-                <option value="pazar-taksi-agartha-pazarcilar">🛒 Agartha - Pazarcılar</option>
-                <option value="pazar-taksi-agartha-taksi">🚕 Agartha - Taksi Hizmeti</option>
-            </optgroup>
-            <optgroup label="🚕 Pazar-Taksi - Pandora">
-                <option value="pazar-taksi-pandora-pazarcilar">🛒 Pandora - Pazarcılar</option>
-                <option value="pazar-taksi-pandora-taksi">🚕 Pandora - Taksi Hizmeti</option>
-            </optgroup>
-            <optgroup label="🚕 Pazar-Taksi - Felis">
-                <option value="pazar-taksi-felis-pazarcilar">🛒 Felis - Pazarcılar</option>
-                <option value="pazar-taksi-felis-taksi">🚕 Felis - Taksi Hizmeti</option>
-            </optgroup>
-            <optgroup label="🚕 Pazar-Taksi - Dryads">
-                <option value="pazar-taksi-dryads-pazarcilar">🛒 Dryads - Pazarcılar</option>
-                <option value="pazar-taksi-dryads-taksi">🚕 Dryads - Taksi Hizmeti</option>
-            </optgroup>
-            <optgroup label="🚕 Pazar-Taksi - Destan">
-                <option value="pazar-taksi-destan-pazarcilar">🛒 Destan - Pazarcılar</option>
-                <option value="pazar-taksi-destan-taksi">🚕 Destan - Taksi Hizmeti</option>
-            </optgroup>
-            <optgroup label="🚕 Pazar-Taksi - Minark">
-                <option value="pazar-taksi-minark-pazarcilar">🛒 Minark - Pazarcılar</option>
-                <option value="pazar-taksi-minark-taksi">🚕 Minark - Taksi Hizmeti</option>
-            </optgroup>
-            <optgroup label="🚕 Pazar-Taksi - Oreads">
-                <option value="pazar-taksi-oreads-pazarcilar">🛒 Oreads - Pazarcılar</option>
-                <option value="pazar-taksi-oreads-taksi">🚕 Oreads - Taksi Hizmeti</option>
-            </optgroup>
-            <optgroup label="🚕 Pazar-Taksi - Zion(steamko)">
-                <option value="pazar-taksi-zion-pazarcilar">🛒 Zion(steamko) - Pazarcılar</option>
-                <option value="pazar-taksi-zion-taksi">🚕 Zion(steamko) - Taksi Hizmeti</option>
-            </optgroup>
         </select>
         
         <input type="url" id="bannerImageUrl" placeholder="📷 Banner Görsel URL'si (zorunlu - direkt görsel linki, örn: https://i.imgur.com/xxxxx.jpg)">
@@ -250,6 +215,79 @@
 
         <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Mevcut Banner'lar</h3>
         <div id="bannerList"></div>
+        </div>
+
+        <!-- PAZAR-TAKSİ BANNER YÖNETİMİ -->
+        <div id="tabContentPazarTaksi" class="tab-content" style="display: none;">
+        <h2 style="color: #FFD66B; margin: 30px 0 20px 0;">🚕 Pazar-Taksi Banner Yönetimi</h2>
+        <p style="color: #8E97A8; margin-bottom: 20px; font-size: 14px;">
+            Her pozisyon için maksimum 20 banner ekleyebilirsiniz. Mobil uygulamada tüm aktif banner'lar sırayla alt alta gösterilir.
+        </p>
+        
+        <div id="pazarTaksiAlert" class="alert"></div>
+
+        <select id="pazarTaksiPosition" style="margin-bottom: 10px;">
+            <option value="">-- Banner Konumu Seçin --</option>
+            <optgroup label="🌐 Zero">
+                <option value="pazar-taksi-zero-pazarcilar">🛒 Zero - Pazarcılar</option>
+                <option value="pazar-taksi-zero-taksi">🚕 Zero - Taksi Hizmeti</option>
+            </optgroup>
+            <optgroup label="🏛️ Agartha">
+                <option value="pazar-taksi-agartha-pazarcilar">🛒 Agartha - Pazarcılar</option>
+                <option value="pazar-taksi-agartha-taksi">🚕 Agartha - Taksi Hizmeti</option>
+            </optgroup>
+            <optgroup label="📦 Pandora">
+                <option value="pazar-taksi-pandora-pazarcilar">🛒 Pandora - Pazarcılar</option>
+                <option value="pazar-taksi-pandora-taksi">🚕 Pandora - Taksi Hizmeti</option>
+            </optgroup>
+            <optgroup label="🐱 Felis">
+                <option value="pazar-taksi-felis-pazarcilar">🛒 Felis - Pazarcılar</option>
+                <option value="pazar-taksi-felis-taksi">🚕 Felis - Taksi Hizmeti</option>
+            </optgroup>
+            <optgroup label="🌿 Dryads">
+                <option value="pazar-taksi-dryads-pazarcilar">🛒 Dryads - Pazarcılar</option>
+                <option value="pazar-taksi-dryads-taksi">🚕 Dryads - Taksi Hizmeti</option>
+            </optgroup>
+            <optgroup label="⚔️ Destan">
+                <option value="pazar-taksi-destan-pazarcilar">🛒 Destan - Pazarcılar</option>
+                <option value="pazar-taksi-destan-taksi">🚕 Destan - Taksi Hizmeti</option>
+            </optgroup>
+            <optgroup label="🏰 Minark">
+                <option value="pazar-taksi-minark-pazarcilar">🛒 Minark - Pazarcılar</option>
+                <option value="pazar-taksi-minark-taksi">🚕 Minark - Taksi Hizmeti</option>
+            </optgroup>
+            <optgroup label="⛰️ Oreads">
+                <option value="pazar-taksi-oreads-pazarcilar">🛒 Oreads - Pazarcılar</option>
+                <option value="pazar-taksi-oreads-taksi">🚕 Oreads - Taksi Hizmeti</option>
+            </optgroup>
+            <optgroup label="🎮 Zion(steamko)">
+                <option value="pazar-taksi-zion-pazarcilar">🛒 Zion(steamko) - Pazarcılar</option>
+                <option value="pazar-taksi-zion-taksi">🚕 Zion(steamko) - Taksi Hizmeti</option>
+            </optgroup>
+        </select>
+        
+        <input type="url" id="pazarTaksiImageUrl" placeholder="📷 Banner Görsel URL'si (zorunlu - direkt görsel linki, örn: https://i.imgur.com/xxxxx.jpg)">
+        <div style="background: #2D3748; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid #FFD66B;">
+            <p style="color: #FFD66B; font-size: 14px; font-weight: bold; margin: 0 0 10px 0;">📌 %100 Çalışması İçin:</p>
+            <p style="color: #8E97A8; font-size: 13px; margin: 5px 0;">
+                ✅ <strong>En İyi Yöntem (Imgur):</strong><br>
+                1. https://imgur.com adresine gidin<br>
+                2. Görselinizi yükleyin<br>
+                3. Görsele sağ tıklayıp "Resmi yeni sekmede aç" deyin<br>
+                4. Yeni sekmedeki URL'yi kopyalayın (https://i.imgur.com/xxxxx.jpg formatında olmalı)
+            </p>
+            <p style="color: #FF6B6B; font-size: 13px; margin: 5px 0;">
+                ❌ <strong>Kullanmayın:</strong><br>
+                • imgur.com/a/... (Album linki)<br>
+                • imgur.com/xxxxx (Sayfa linki)<br>
+                • ibb.co/xxxxx (ImageBB sayfa linki)
+            </p>
+        </div>
+        <input type="url" id="pazarTaksiClickUrl" placeholder="🔗 Tıklama Linki (isteğe bağlı)">
+        <button onclick="pazarTaksiBannerKaydet()">💾 Banner Kaydet</button>
+
+        <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Mevcut Pazar-Taksi Banner'ları</h3>
+        <div id="pazarTaksiBannerList"></div>
         </div>
 
         <!-- BİLDİRİM GÖNDERME -->
@@ -336,6 +374,7 @@
             istatistikleriYukle();
             bildirimleriYukle();
             bannerlariYukle();
+            pazarTaksiBannerlariYukle();
         }
 
         // İstatistikleri yükle
@@ -540,6 +579,7 @@
                     document.getElementById('bannerImageUrl').value = '';
                     document.getElementById('bannerClickUrl').value = '';
                     bannerlariYukle();
+                    pazarTaksiBannerlariYukle();
                 } else {
                     gosterAlert('bannerAlert', '❌ ' + (data.error || 'Hata!'), 'error');
                 }
@@ -565,41 +605,26 @@
                     return;
                 }
 
-                if (bannerlar.length === 0) {
-                    list.innerHTML = '<p style="color: #8E97A8; text-align: center; padding: 20px;">Henüz banner eklenmedi</p>';
-                    return;
-                }
-
                 const positionNames = {
                     'home': '🏠 Anasayfa',
                     'merchant': '💰 Merchant',
                     'goldbar': '💎 Goldbar',
                     'karakter': '👤 Karakter',
                     'skill': '⚔️ Skill Hesapla',
-                    'chardiz': '📐 Char Diz',
-                    'pazar-taksi-zero-pazarcilar': '🛒 Zero - Pazarcılar',
-                    'pazar-taksi-zero-taksi': '🚕 Zero - Taksi Hizmeti',
-                    'pazar-taksi-agartha-pazarcilar': '🛒 Agartha - Pazarcılar',
-                    'pazar-taksi-agartha-taksi': '🚕 Agartha - Taksi Hizmeti',
-                    'pazar-taksi-pandora-pazarcilar': '🛒 Pandora - Pazarcılar',
-                    'pazar-taksi-pandora-taksi': '🚕 Pandora - Taksi Hizmeti',
-                    'pazar-taksi-felis-pazarcilar': '🛒 Felis - Pazarcılar',
-                    'pazar-taksi-felis-taksi': '🚕 Felis - Taksi Hizmeti',
-                    'pazar-taksi-dryads-pazarcilar': '🛒 Dryads - Pazarcılar',
-                    'pazar-taksi-dryads-taksi': '🚕 Dryads - Taksi Hizmeti',
-                    'pazar-taksi-destan-pazarcilar': '🛒 Destan - Pazarcılar',
-                    'pazar-taksi-destan-taksi': '🚕 Destan - Taksi Hizmeti',
-                    'pazar-taksi-minark-pazarcilar': '🛒 Minark - Pazarcılar',
-                    'pazar-taksi-minark-taksi': '🚕 Minark - Taksi Hizmeti',
-                    'pazar-taksi-oreads-pazarcilar': '🛒 Oreads - Pazarcılar',
-                    'pazar-taksi-oreads-taksi': '🚕 Oreads - Taksi Hizmeti',
-                    'pazar-taksi-zion-pazarcilar': '🛒 Zion(steamko) - Pazarcılar',
-                    'pazar-taksi-zion-taksi': '🚕 Zion(steamko) - Taksi Hizmeti'
+                    'chardiz': '📐 Char Diz'
                 };
+
+                // Sadece Pazar-Taksi OLMAYAN banner'ları filtrele
+                const normalBanners = bannerlar.filter(b => !b.position.startsWith('pazar-taksi-'));
+
+                if (normalBanners.length === 0) {
+                    list.innerHTML = '<p style="color: #8E97A8; text-align: center; padding: 20px;">Henüz banner eklenmedi</p>';
+                    return;
+                }
 
                 // Position'a göre grupla
                 const groupedBanners = {};
-                bannerlar.forEach(b => {
+                normalBanners.forEach(b => {
                     if (!groupedBanners[b.position]) {
                         groupedBanners[b.position] = [];
                     }
@@ -608,10 +633,9 @@
 
                 list.innerHTML = Object.keys(groupedBanners).map(position => {
                     const banners = groupedBanners[position];
-                    const maxBanners = position.startsWith('pazar-taksi-') ? 20 : 10;
                     return `
                         <div style="margin-bottom: 30px;">
-                            <h4 style="color: #FFD66B; margin-bottom: 15px;">${positionNames[position] || position} (${banners.length}/${maxBanners})</h4>
+                            <h4 style="color: #FFD66B; margin-bottom: 15px;">${positionNames[position] || position} (${banners.length}/10)</h4>
                             ${banners.map(b => `
                                 <div class="update-item" style="margin-bottom: 15px;">
                                     <div class="update-title">Banner #${b.id}</div>
@@ -647,11 +671,154 @@
                 if (data.success) {
                     gosterAlert('bannerAlert', '✅ Banner silindi!', 'success');
                     bannerlariYukle();
+                    pazarTaksiBannerlariYukle();
                 } else {
                     gosterAlert('bannerAlert', '❌ ' + (data.error || 'Hata!'), 'error');
                 }
             } catch (err) {
                 gosterAlert('bannerAlert', '❌ Hata: ' + err.message, 'error');
+            }
+        }
+
+        // Pazar-Taksi Banner kaydet
+        async function pazarTaksiBannerKaydet() {
+            const position = document.getElementById('pazarTaksiPosition').value;
+            const imageUrl = document.getElementById('pazarTaksiImageUrl').value.trim();
+            const clickUrl = document.getElementById('pazarTaksiClickUrl').value.trim();
+
+            if (!position) {
+                gosterAlert('pazarTaksiAlert', '⚠️ Lütfen banner konumu seçin!', 'error');
+                return;
+            }
+
+            if (!imageUrl) {
+                gosterAlert('pazarTaksiAlert', '⚠️ Banner görsel URL\'si gerekli!', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch(API_URL + '/admin/banner', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ position, imageUrl, clickUrl, active: true })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    gosterAlert('pazarTaksiAlert', '✅ Banner kaydedildi!', 'success');
+                    document.getElementById('pazarTaksiImageUrl').value = '';
+                    document.getElementById('pazarTaksiClickUrl').value = '';
+                    pazarTaksiBannerlariYukle();
+                } else {
+                    gosterAlert('pazarTaksiAlert', '❌ ' + (data.error || 'Hata!'), 'error');
+                }
+            } catch (err) {
+                gosterAlert('pazarTaksiAlert', '❌ Hata: ' + err.message, 'error');
+            }
+        }
+
+        // Pazar-Taksi Banner'ları yükle
+        async function pazarTaksiBannerlariYukle() {
+            try {
+                const res = await fetch(API_URL + '/admin/banners');
+                if (!res.ok) {
+                    throw new Error('Banner listesi yüklenemedi: ' + res.status);
+                }
+                const bannerlar = await res.json();
+                const list = document.getElementById('pazarTaksiBannerList');
+
+                // Array kontrolü
+                if (!Array.isArray(bannerlar)) {
+                    console.error('Banner listesi bir array değil:', bannerlar);
+                    list.innerHTML = '<p style="color: #EF4444; text-align: center; padding: 20px;">Banner listesi format hatası</p>';
+                    return;
+                }
+
+                const positionNames = {
+                    'pazar-taksi-zero-pazarcilar': '🛒 Zero - Pazarcılar',
+                    'pazar-taksi-zero-taksi': '🚕 Zero - Taksi Hizmeti',
+                    'pazar-taksi-agartha-pazarcilar': '🛒 Agartha - Pazarcılar',
+                    'pazar-taksi-agartha-taksi': '🚕 Agartha - Taksi Hizmeti',
+                    'pazar-taksi-pandora-pazarcilar': '🛒 Pandora - Pazarcılar',
+                    'pazar-taksi-pandora-taksi': '🚕 Pandora - Taksi Hizmeti',
+                    'pazar-taksi-felis-pazarcilar': '🛒 Felis - Pazarcılar',
+                    'pazar-taksi-felis-taksi': '🚕 Felis - Taksi Hizmeti',
+                    'pazar-taksi-dryads-pazarcilar': '🛒 Dryads - Pazarcılar',
+                    'pazar-taksi-dryads-taksi': '🚕 Dryads - Taksi Hizmeti',
+                    'pazar-taksi-destan-pazarcilar': '🛒 Destan - Pazarcılar',
+                    'pazar-taksi-destan-taksi': '🚕 Destan - Taksi Hizmeti',
+                    'pazar-taksi-minark-pazarcilar': '🛒 Minark - Pazarcılar',
+                    'pazar-taksi-minark-taksi': '🚕 Minark - Taksi Hizmeti',
+                    'pazar-taksi-oreads-pazarcilar': '🛒 Oreads - Pazarcılar',
+                    'pazar-taksi-oreads-taksi': '🚕 Oreads - Taksi Hizmeti',
+                    'pazar-taksi-zion-pazarcilar': '🛒 Zion(steamko) - Pazarcılar',
+                    'pazar-taksi-zion-taksi': '🚕 Zion(steamko) - Taksi Hizmeti'
+                };
+
+                // Sadece Pazar-Taksi banner'larını filtrele
+                const pazarTaksiBanners = bannerlar.filter(b => b.position.startsWith('pazar-taksi-'));
+
+                if (pazarTaksiBanners.length === 0) {
+                    list.innerHTML = '<p style="color: #8E97A8; text-align: center; padding: 20px;">Henüz Pazar-Taksi banner'ı eklenmedi</p>';
+                    return;
+                }
+
+                // Position'a göre grupla
+                const groupedBanners = {};
+                pazarTaksiBanners.forEach(b => {
+                    if (!groupedBanners[b.position]) {
+                        groupedBanners[b.position] = [];
+                    }
+                    groupedBanners[b.position].push(b);
+                });
+
+                list.innerHTML = Object.keys(groupedBanners).map(position => {
+                    const banners = groupedBanners[position];
+                    return `
+                        <div style="margin-bottom: 30px;">
+                            <h4 style="color: #FFD66B; margin-bottom: 15px;">${positionNames[position] || position} (${banners.length}/20)</h4>
+                            ${banners.map(b => `
+                                <div class="update-item" style="margin-bottom: 15px;">
+                                    <div class="update-title">Banner #${b.id}</div>
+                                    ${b.imageUrl ? `<img src="${escapeHtml(b.imageUrl)}" alt="Banner" style="max-width: 100%; margin: 10px 0; border-radius: 8px; max-height: 200px;" onerror="this.style.display='none'">` : ''}
+                                    ${b.clickUrl ? `<div class="update-content">🔗 Link: <a href="${escapeHtml(b.clickUrl)}" target="_blank" style="color: #FFD66B;">${escapeHtml(b.clickUrl)}</a></div>` : ''}
+                                    <div class="update-meta">
+                                        <span>Durum: ${b.active ? '✅ Aktif' : '❌ Pasif'}</span>
+                                        <span>${b.createdAt ? new Date(b.createdAt).toLocaleDateString('tr-TR') : ''}</span>
+                                        <button class="btn-danger" onclick="pazarTaksiBannerSil(${b.id})">🗑️ Sil</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error('Pazar-Taksi banner yükleme hatası:', err);
+            }
+        }
+
+        // Pazar-Taksi Banner sil
+        async function pazarTaksiBannerSil(id) {
+            if (!confirm('Banner\'ı silmek istediğinize emin misiniz?')) return;
+
+            try {
+                const res = await fetch(API_URL + '/admin/banner/' + id, {
+                    method: 'DELETE'
+                });
+                if (!res.ok) throw new Error('Silme başarısız: ' + res.status);
+
+                const data = await res.json();
+
+                if (data.success) {
+                    gosterAlert('pazarTaksiAlert', '✅ Banner silindi!', 'success');
+                    pazarTaksiBannerlariYukle();
+                    bannerlariYukle();
+                } else {
+                    gosterAlert('pazarTaksiAlert', '❌ ' + (data.error || 'Hata!'), 'error');
+                }
+            } catch (err) {
+                gosterAlert('pazarTaksiAlert', '❌ Hata: ' + err.message, 'error');
             }
         }
 
@@ -669,14 +836,28 @@
             });
             
             // Seçili sekmeyi göster
-            const contentId = 'tabContent' + tabName.charAt(0).toUpperCase() + tabName.slice(1);
+            let contentId;
+            if (tabName === 'pazarTaksi') {
+                contentId = 'tabContentPazarTaksi';
+            } else {
+                contentId = 'tabContent' + tabName.charAt(0).toUpperCase() + tabName.slice(1);
+            }
             const contentElement = document.getElementById(contentId);
             if (contentElement) {
                 contentElement.style.display = 'block';
+                // Pazar-Taksi sekmesine geçildiğinde banner'ları yükle
+                if (tabName === 'pazarTaksi') {
+                    pazarTaksiBannerlariYukle();
+                }
             }
             
             // Seçili sekme butonunu aktif yap
-            const buttonId = 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1);
+            let buttonId;
+            if (tabName === 'pazarTaksi') {
+                buttonId = 'tabPazarTaksi';
+            } else {
+                buttonId = 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1);
+            }
             const activeBtn = document.getElementById(buttonId);
             if (activeBtn) {
                 activeBtn.style.background = '#FFD66B';
