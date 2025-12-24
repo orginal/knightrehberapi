@@ -348,15 +348,35 @@
 
         // Giriş yap
         async function girisYap() {
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-
             try {
+                const usernameEl = document.getElementById('username');
+                const passwordEl = document.getElementById('password');
+                
+                if (!usernameEl || !passwordEl) {
+                    console.error('Kullanıcı adı veya şifre alanı bulunamadı!');
+                    alert('Hata: Form alanları bulunamadı!');
+                    return;
+                }
+
+                const username = usernameEl.value;
+                const password = passwordEl.value;
+
+                if (!username || !password) {
+                    gosterAlert('loginAlert', 'Lütfen kullanıcı adı ve şifre girin!', 'error');
+                    return;
+                }
+
+                console.log('Giriş deneniyor...', { username, passwordLength: password.length });
+
                 const res = await fetch(API_URL + '/admin/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
                 });
+
+                if (!res.ok) {
+                    throw new Error('HTTP ' + res.status);
+                }
 
                 const data = await res.json();
 
@@ -366,9 +386,10 @@
                     document.getElementById('mainPanel').style.display = 'block';
                     yukle();
                 } else {
-                    gosterAlert('loginAlert', data.error || 'Hata!', 'error');
+                    gosterAlert('loginAlert', data.error || 'Giriş başarısız!', 'error');
                 }
             } catch (err) {
+                console.error('Giriş hatası:', err);
                 gosterAlert('loginAlert', 'Bağlantı hatası: ' + err.message, 'error');
             }
         }
