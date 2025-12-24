@@ -153,17 +153,25 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   console.log(`📤 Bildirim mesajı: "${message}"`);
 
   try {
+    // iOS için channelId kullanılmaz (Android'e özgü)
+    // Expo Push API platforma göre otomatik işler, ama iOS için channelId göndermemek daha iyi
     const messages = validTokens.map(token => {
-      return {
+      const messageObj = {
         to: token,
         sound: 'default',
         title: title,
         body: message,
         data: { title, message, ...(imageUrl && { imageUrl }) },
         priority: 'high',
-        channelId: 'default',
         badge: 1
       };
+      
+      // channelId sadece Android için (iOS'ta desteklenmez)
+      // Token formatından platform tespit edilemez, bu yüzden channelId'yi kaldırıyoruz
+      // Expo API zaten platforma göre otomatik işler
+      // Android için channelId eklemek isterseniz, platform bilgisini token kaydında saklamanız gerekir
+      
+      return messageObj;
     });
 
     console.log('📤 Expo Push API\'ye istek gönderiliyor...');
@@ -263,20 +271,31 @@ app.post('/api/admin/login', (req, res) => {
 // İstatistikler
 app.get('/api/admin/stats', async (req, res) => {
   let tokenCount = 0;
+  let mongoTokenCount = 0;
+  let memoryTokenCount = userTokens.length;
   
   // MongoDB'den token sayısını al
   const isMongoConnected = await connectToMongoDB();
   if (isMongoConnected && db) {
     try {
       const tokensCollection = db.collection('push_tokens');
-      tokenCount = await tokensCollection.countDocuments();
+      mongoTokenCount = await tokensCollection.countDocuments();
+      console.log('📊 MongoDB token sayısı:', mongoTokenCount);
     } catch (error) {
       console.error('❌ MongoDB token sayısı hatası:', error.message);
-      tokenCount = userTokens.length; // Fallback
     }
-  } else {
-    tokenCount = userTokens.length; // Fallback
   }
+  
+  // Toplam token sayısı: MongoDB + Memory (eğer MongoDB'de yoksa memory'den)
+  // Memory'deki token'lar MongoDB'de de olabilir, bu yüzden sadece MongoDB sayısını kullan
+  // Ama MongoDB bağlantısı yoksa memory'den al
+  if (isMongoConnected && db && mongoTokenCount > 0) {
+    tokenCount = mongoTokenCount;
+  } else {
+    tokenCount = memoryTokenCount;
+  }
+  
+  console.log('📊 Toplam token sayısı (istatistik):', tokenCount, '(MongoDB:', mongoTokenCount, ', Memory:', memoryTokenCount, ')');
   
   res.json({
     totalUsers: 0,
@@ -286,6 +305,50 @@ app.get('/api/admin/stats', async (req, res) => {
     appVersion: '1.0.0',
     appStatus: 'active'
   });
+});
+
+// Token listesi (debug için)
+app.get('/api/admin/tokens', async (req, res) => {
+  try {
+    const isMongoConnected = await connectToMongoDB();
+    let tokens = [];
+    
+    if (isMongoConnected && db) {
+      try {
+        const tokensCollection = db.collection('push_tokens');
+        tokens = await tokensCollection.find({})
+          .sort({ updatedAt: -1 })
+          .limit(100)
+          .toArray();
+        console.log('📊 MongoDB\'den token listesi alındı:', tokens.length);
+      } catch (error) {
+        console.error('❌ MongoDB token listesi hatası:', error.message);
+      }
+    } else {
+      // Memory'den al
+      tokens = userTokens.map((token, index) => ({
+        token: token.substring(0, 50) + '...',
+        fullToken: token,
+        source: 'memory',
+        index: index
+      }));
+    }
+    
+    res.json({
+      success: true,
+      tokens: tokens.map(t => ({
+        token: t.token ? t.token.substring(0, 50) + '...' : (t.fullToken ? t.fullToken.substring(0, 50) + '...' : 'N/A'),
+        experienceId: t.experienceId || 'YOK',
+        updatedAt: t.updatedAt || t.lastSeen || 'N/A',
+        createdAt: t.createdAt || 'N/A'
+      })),
+      total: tokens.length,
+      mongoConnected: isMongoConnected && db ? true : false
+    });
+  } catch (error) {
+    console.error('❌ Token listesi hatası:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // Bildirim gönder
@@ -323,34 +386,30 @@ app.post('/api/admin/send-notification', async (req, res) => {
       try {
         const tokensCollection = db.collection('push_tokens');
         
-        // ÖNCE: Tüm token'ları al ve logla (debug için)
+        // ✅ TÜM TOKEN'LARI AL - ExperienceId'ye göre filtreleme YOK
+        // Tüm platformlardan (Android, iOS) ve tüm experienceId'lerden token'ları al
         const allTokens = await tokensCollection.find({}).toArray();
         console.log('📊 MongoDB\'de toplam token sayısı:', allTokens.length);
+        
+        // ExperienceId'ye göre grupla (sadece log için)
+        const tokensByExpId = {};
         allTokens.forEach(t => {
-          console.log(`  - Token: ${t.token.substring(0, 30)}..., experienceId: ${t.experienceId || 'YOK'}`);
+          const expId = t.experienceId || 'YOK (iOS)';
+          if (!tokensByExpId[expId]) {
+            tokensByExpId[expId] = [];
+          }
+          tokensByExpId[expId].push(t);
+          console.log(`  - Token: ${t.token.substring(0, 30)}..., experienceId: ${expId}`);
         });
         
-        // Sadece @ceylan26/knight-rehber experience ID'sine ait token'ları al
-        const tokens = await tokensCollection.find({ experienceId: '@ceylan26/knight-rehber' }).toArray();
-        tokensToSend = tokens.map(t => t.token).filter(t => t && t.trim());
-        console.log('✅ MongoDB\'den token sayısı (@ceylan26/knight-rehber):', tokensToSend.length);
+        // Her experienceId için sayı göster
+        Object.keys(tokensByExpId).forEach(expId => {
+          console.log(`📱 ${expId}: ${tokensByExpId[expId].length} token`);
+        });
         
-        // Eski @mike0835 token'larını logla (silinebilir)
-        const oldTokens = await tokensCollection.find({ experienceId: '@mike0835/knight-rehber' }).toArray();
-        if (oldTokens.length > 0) {
-          console.log('⚠️ Eski @mike0835/knight-rehber token sayısı:', oldTokens.length, '(kullanılmıyor)');
-        }
-        
-        // ExperienceId'si null/undefined olan eski token'ları logla
-        const nullExpIdTokens = await tokensCollection.find({ 
-          $or: [
-            { experienceId: null },
-            { experienceId: { $exists: false } }
-          ]
-        }).toArray();
-        if (nullExpIdTokens.length > 0) {
-          console.log('⚠️ ExperienceId olmayan eski token sayısı:', nullExpIdTokens.length, '(kullanılmıyor)');
-        }
+        // ✅ TÜM TOKEN'LARI KULLAN - Filtreleme yok
+        tokensToSend = allTokens.map(t => t.token).filter(t => t && t.trim());
+        console.log('✅ MongoDB\'den toplam token sayısı (TÜM PLATFORMLAR):', tokensToSend.length);
       } catch (error) {
         console.error('❌ MongoDB token okuma hatası:', error.message);
         mongoError = error.message;
@@ -560,15 +619,26 @@ app.post('/api/push/register', async (req, res) => {
       // MongoDB'ye kaydet
       try {
         const tokensCollection = db.collection('push_tokens');
+        const updateData = {
+          token: tokenStr,
+          updatedAt: new Date(),
+          lastSeen: new Date()
+        };
+        
+        // ExperienceId sadece varsa ekle (iOS'ta null olabilir)
+        if (expId) {
+          updateData.experienceId = expId;
+        }
+        
+        // Platform bilgisini ekle (iOS/Android)
+        if (platformStr) {
+          updateData.platform = platformStr;
+        }
+        
         const result = await tokensCollection.updateOne(
           { token: tokenStr },
           { 
-            $set: { 
-              token: tokenStr,
-              experienceId: expId,
-              updatedAt: new Date(),
-              lastSeen: new Date()
-            },
+            $set: updateData,
             $setOnInsert: {
               createdAt: new Date()
             }
@@ -578,15 +648,25 @@ app.post('/api/push/register', async (req, res) => {
         
         const totalTokens = await tokensCollection.countDocuments();
         console.log('✅ Push token MongoDB\'ye kaydedildi. Toplam:', totalTokens);
-        res.json({ success: true, message: 'Token kaydedildi', totalTokens });
+        console.log('📊 Platform:', platformStr || 'Belirtilmemiş');
+        console.log('📊 Experience ID:', expId || 'null');
+        console.log('📊 Upsert sonucu - Matched:', result.matchedCount, 'Modified:', result.modifiedCount, 'Upserted:', result.upsertedCount);
+        res.json({ success: true, message: 'Token kaydedildi', totalTokens, platform: platformStr || 'unknown' });
         return;
       } catch (mongoError) {
         console.error('❌ MongoDB kayıt hatası:', mongoError.message);
-        // Fallback: Memory database'ye kaydet
+        console.error('❌ MongoDB hata detayları:', mongoError);
+        // MongoDB bağlantısı varsa ama kayıt başarısız olursa hata döndür
+        // Memory'ye kaydetme - MongoDB çalışıyorsa oraya kaydetmeliyiz
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Token MongoDB\'ye kaydedilemedi: ' + mongoError.message 
+        });
       }
     }
     
-    // Fallback: Memory database
+    // Fallback: Memory database (sadece MongoDB bağlantısı yoksa)
+    console.log('⚠️ MongoDB bağlantısı yok, memory\'ye kaydediliyor...');
     console.log('📊 Mevcut token sayısı (kayıt öncesi):', userTokens.length);
     
     if (!userTokens.includes(tokenStr)) {
@@ -597,7 +677,7 @@ app.post('/api/push/register', async (req, res) => {
     }
 
     console.log('📊 Token kayıt sonrası toplam:', userTokens.length);
-    res.json({ success: true, message: 'Token kaydedildi (memory)', totalTokens: userTokens.length });
+    res.json({ success: true, message: 'Token kaydedildi (memory - MongoDB bağlantısı yok)', totalTokens: userTokens.length });
   } catch (error) {
     console.error('❌ Token kayıt hatası:', error);
     res.status(500).json({ success: false, error: 'Hata: ' + error.message });
@@ -930,10 +1010,13 @@ app.post('/api/admin/banner', async (req, res) => {
         const bannersCollection = db.collection('reklam_bannerlar');
         bannerCount = await bannersCollection.countDocuments({ position: String(position).trim() });
         
-        if (bannerCount >= 10) {
+        // Pazar-Taksi position'ları için 20 banner limiti, diğerleri için 10
+        const maxBanners = String(position).trim().startsWith('pazar-taksi-') ? 20 : 10;
+        
+        if (bannerCount >= maxBanners) {
           return res.status(400).json({ 
             success: false, 
-            error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
+            error: `Bu position için maksimum ${maxBanners} banner eklenebilir. Önce bir banner silin.` 
           });
         }
       } catch (error) {
@@ -941,10 +1024,11 @@ app.post('/api/admin/banner', async (req, res) => {
       }
     } else {
       bannerCount = database.reklamBannerlar.filter(b => b.position === String(position).trim()).length;
-      if (bannerCount >= 10) {
+      const maxBanners = String(position).trim().startsWith('pazar-taksi-') ? 20 : 10;
+      if (bannerCount >= maxBanners) {
         return res.status(400).json({ 
           success: false, 
-          error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
+          error: `Bu position için maksimum ${maxBanners} banner eklenebilir. Önce bir banner silin.` 
         });
       }
     }
