@@ -132,9 +132,9 @@
     <div id="loginScreen" class="login-box">
         <h1>🏰 Knight Rehber</h1>
         <div id="loginAlert" class="alert"></div>
-        <input type="text" id="username" name="username" placeholder="Kullanıcı Adı" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')" onkeypress="if(event.key === 'Enter') document.getElementById('password').focus()">
-        <input type="password" id="password" name="password" placeholder="Şifre" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')" onkeypress="if(event.key === 'Enter') { event.preventDefault(); girisYap(); }">
-        <button type="button" id="loginButton">Giriş Yap</button>
+        <input type="text" id="username" name="username" placeholder="Kullanıcı Adı" autocomplete="off" readonly onfocus="this.removeAttribute('readonly')">
+        <input type="password" id="password" name="password" placeholder="Şifre" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')">
+        <button onclick="girisYap()">Giriş Yap</button>
     </div>
 
     <!-- ANA PANEL -->
@@ -334,49 +334,17 @@
         const API_URL = window.location.origin + '/api';
         let token = '';
 
-        // Sayfa yüklendiğinde event listener'ları ekle
-        document.addEventListener('DOMContentLoaded', function() {
-            const loginButton = document.getElementById('loginButton');
-            if (loginButton) {
-                loginButton.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    girisYap();
-                });
-            }
-        });
-
         // Giriş yap
         async function girisYap() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
             try {
-                const usernameEl = document.getElementById('username');
-                const passwordEl = document.getElementById('password');
-                
-                if (!usernameEl || !passwordEl) {
-                    console.error('Kullanıcı adı veya şifre alanı bulunamadı!');
-                    alert('Hata: Form alanları bulunamadı!');
-                    return;
-                }
-
-                const username = usernameEl.value;
-                const password = passwordEl.value;
-
-                if (!username || !password) {
-                    gosterAlert('loginAlert', 'Lütfen kullanıcı adı ve şifre girin!', 'error');
-                    return;
-                }
-
-                console.log('Giriş deneniyor...', { username, passwordLength: password.length });
-
                 const res = await fetch(API_URL + '/admin/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
                 });
-
-                if (!res.ok) {
-                    throw new Error('HTTP ' + res.status);
-                }
 
                 const data = await res.json();
 
@@ -386,10 +354,9 @@
                     document.getElementById('mainPanel').style.display = 'block';
                     yukle();
                 } else {
-                    gosterAlert('loginAlert', data.error || 'Giriş başarısız!', 'error');
+                    gosterAlert('loginAlert', data.error || 'Hata!', 'error');
                 }
             } catch (err) {
-                console.error('Giriş hatası:', err);
                 gosterAlert('loginAlert', 'Bağlantı hatası: ' + err.message, 'error');
             }
         }
