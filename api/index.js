@@ -142,16 +142,21 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   // Token'ları normalize et: eğer string array ise object array'e çevir
   const tokenObjects = pushTokens.map(t => {
     if (typeof t === 'string') {
-      return { token: t, experienceId: null };
+      return { token: t, experienceId: null, platform: null };
     }
-    return { token: t.token || t, experienceId: t.experienceId || null };
+    return { 
+      token: t.token || t, 
+      experienceId: t.experienceId || null,
+      platform: t.platform || null
+    };
   });
 
   // Token'ları temizle ve geçerli olanları filtrele
   const validTokens = tokenObjects
     .map(t => ({
       token: String(t.token).trim(),
-      experienceId: t.experienceId ? String(t.experienceId).trim() : null
+      experienceId: t.experienceId ? String(t.experienceId).trim() : null,
+      platform: t.platform ? String(t.platform).trim().toLowerCase() : null
     }))
     .filter(t => t.token && t.token.startsWith('ExponentPushToken[') && t.token.length > 20);
 
@@ -165,18 +170,32 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   console.log(`📤 Bildirim mesajı: "${message}"`);
 
   // Token'ları experienceId'ye göre grupla
-  // experienceId'si olmayan token'ları atla (farklı projelere ait olabilir, Expo hatası verir)
+  // iOS token'ları (platform='ios' ve experienceId=null) tek grup olarak gönderilebilir
+  // Diğer experienceId olmayan token'lar atlanır (farklı projelere ait olabilir)
   const tokensByExpId = {};
   validTokens.forEach(t => {
-    if (!t.experienceId) {
-      console.log(`⚠️ Token atlandı (experienceId yok): ${t.token.substring(0, 30)}...`);
-      return; // experienceId olmayan token'ları atla
+    // iOS token'ları: platform='ios' ve experienceId=null -> 'IOS_NO_EXP_ID' grubuna ekle
+    if (!t.experienceId && t.platform === 'ios') {
+      const expId = 'IOS_NO_EXP_ID';
+      if (!tokensByExpId[expId]) {
+        tokensByExpId[expId] = [];
+      }
+      tokensByExpId[expId].push(t.token);
+      return;
     }
-    const expId = t.experienceId;
-    if (!tokensByExpId[expId]) {
-      tokensByExpId[expId] = [];
+    
+    // experienceId'si olan token'lar -> experienceId'ye göre grupla
+    if (t.experienceId) {
+      const expId = t.experienceId;
+      if (!tokensByExpId[expId]) {
+        tokensByExpId[expId] = [];
+      }
+      tokensByExpId[expId].push(t.token);
+      return;
     }
-    tokensByExpId[expId].push(t.token);
+    
+    // experienceId olmayan ve iOS olmayan token'lar atlanır
+    console.log(`⚠️ Token atlandı (experienceId yok, platform: ${t.platform || 'bilinmiyor'}): ${t.token.substring(0, 30)}...`);
   });
 
   console.log(`📊 Token'lar ${Object.keys(tokensByExpId).length} experienceId grubuna ayrıldı:`);
@@ -449,10 +468,11 @@ app.post('/api/admin/send-notification', async (req, res) => {
           console.log(`📱 ${expId}: ${tokensByExpId[expId].length} token`);
         });
         
-        // ✅ TÜM TOKEN'LARI experienceId ile birlikte al - Gruplama için
+        // ✅ TÜM TOKEN'LARI experienceId ve platform ile birlikte al - Gruplama için
         tokensToSend = allTokens.map(t => ({
           token: t.token,
-          experienceId: t.experienceId || null
+          experienceId: t.experienceId || null,
+          platform: t.platform || null
         })).filter(t => t.token && t.token.trim());
         console.log('✅ MongoDB\'den toplam token sayısı (TÜM PLATFORMLAR):', tokensToSend.length);
       } catch (error) {
