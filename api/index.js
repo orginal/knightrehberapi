@@ -132,16 +132,28 @@ let database = {
 };
 
 // Expo Push Notification gönderme fonksiyonu
+// pushTokens: Array of {token: string, experienceId: string|null} veya string array
 async function sendExpoPushNotification(pushTokens, title, message, imageUrl = null) {
   if (!pushTokens || pushTokens.length === 0) {
     console.log('⚠️ Push token yok, bildirim gönderilemedi');
     return { success: 0, failed: 0, error: 'Push token bulunamadı' };
   }
 
+  // Token'ları normalize et: eğer string array ise object array'e çevir
+  const tokenObjects = pushTokens.map(t => {
+    if (typeof t === 'string') {
+      return { token: t, experienceId: null };
+    }
+    return { token: t.token || t, experienceId: t.experienceId || null };
+  });
+
   // Token'ları temizle ve geçerli olanları filtrele
-  const validTokens = pushTokens
-    .map(t => String(t).trim())
-    .filter(t => t && t.startsWith('ExponentPushToken[') && t.length > 20);
+  const validTokens = tokenObjects
+    .map(t => ({
+      token: String(t.token).trim(),
+      experienceId: t.experienceId ? String(t.experienceId).trim() : null
+    }))
+    .filter(t => t.token && t.token.startsWith('ExponentPushToken[') && t.token.length > 20);
 
   if (validTokens.length === 0) {
     console.log('⚠️ Geçerli push token yok');
@@ -152,11 +164,31 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   console.log(`📤 Bildirim başlığı: "${title}"`);
   console.log(`📤 Bildirim mesajı: "${message}"`);
 
-  try {
-    // iOS için channelId kullanılmaz (Android'e özgü)
-    // Expo Push API platforma göre otomatik işler, ama iOS için channelId göndermemek daha iyi
-    const messages = validTokens.map(token => {
-      const messageObj = {
+  // Token'ları experienceId'ye göre grupla
+  const tokensByExpId = {};
+  validTokens.forEach(t => {
+    const expId = t.experienceId || 'NO_EXP_ID';
+    if (!tokensByExpId[expId]) {
+      tokensByExpId[expId] = [];
+    }
+    tokensByExpId[expId].push(t.token);
+  });
+
+  console.log(`📊 Token'lar ${Object.keys(tokensByExpId).length} experienceId grubuna ayrıldı:`);
+  Object.keys(tokensByExpId).forEach(expId => {
+    console.log(`  - ${expId || 'null'}: ${tokensByExpId[expId].length} token`);
+  });
+
+  let totalSuccess = 0;
+  let totalFailed = 0;
+  let allErrorDetails = [];
+
+  // Her experienceId grubu için ayrı request gönder
+  for (const [expId, tokens] of Object.entries(tokensByExpId)) {
+    try {
+      console.log(`📤 ${expId || 'null'} experienceId için ${tokens.length} token'a bildirim gönderiliyor...`);
+      
+      const messages = tokens.map(token => ({
         to: token,
         sound: 'default',
         title: title,
@@ -164,74 +196,79 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
         data: { title, message, ...(imageUrl && { imageUrl }) },
         priority: 'high',
         badge: 1
-      };
+      }));
+
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(messages),
+      });
       
-      // channelId sadece Android için (iOS'ta desteklenmez)
-      // Token formatından platform tespit edilemez, bu yüzden channelId'yi kaldırıyoruz
-      // Expo API zaten platforma göre otomatik işler
-      // Android için channelId eklemek isterseniz, platform bilgisini token kaydında saklamanız gerekir
+      console.log(`📤 ${expId || 'null'} - Expo Push API response status:`, response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ ${expId || 'null'} - Expo Push API hatası:`, response.status, errorText);
+        totalFailed += tokens.length;
+        allErrorDetails.push({
+          experienceId: expId,
+          status: response.status,
+          message: errorText,
+          tokenCount: tokens.length
+        });
+        continue;
+      }
+
+      const result = await response.json();
       
-      return messageObj;
-    });
+      // Her bir token için detaylı log
+      if (result.data && Array.isArray(result.data)) {
+        result.data.forEach((item, index) => {
+          if (item.status === 'ok') {
+            console.log(`✅ ${expId || 'null'} - Token ${index + 1}: OK - ${item.id || 'ID yok'}`);
+          } else {
+            console.error(`❌ ${expId || 'null'} - Token ${index + 1}: ${item.status} - ${item.message || 'Bilinmeyen hata'}`);
+          }
+        });
+      }
 
-    console.log('📤 Expo Push API\'ye istek gönderiliyor...');
-    console.log('📤 Gönderilecek mesaj sayısı:', messages.length);
-    console.log('📤 İlk token (ilk 50 karakter):', validTokens[0]?.substring(0, 50) + '...');
-    
-    const response = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(messages),
-    });
-    
-    console.log('📤 Expo Push API response status:', response.status);
-    console.log('📤 Expo Push API response ok:', response.ok);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Expo Push API hatası:', response.status, errorText);
-      return { success: 0, failed: validTokens.length, error: `API hatası: ${response.status}` };
-    }
-
-    const result = await response.json();
-    console.log('📤 Expo Push Notification sonucu:', JSON.stringify(result, null, 2));
-
-    // Her bir token için detaylı log
-    if (result.data && Array.isArray(result.data)) {
-      result.data.forEach((item, index) => {
-        if (item.status === 'ok') {
-          console.log(`✅ Token ${index + 1} (${validTokens[index]?.substring(0, 30)}...): OK - ${item.id || 'ID yok'}`);
-        } else {
-          console.error(`❌ Token ${index + 1} (${validTokens[index]?.substring(0, 30)}...): ${item.status} - ${item.message || 'Bilinmeyen hata'}`);
-        }
+      const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
+      const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
+      
+      totalSuccess += successCount;
+      totalFailed += failedCount;
+      
+      // Hata detaylarını topla
+      if (failedCount > 0) {
+        const errors = result.data?.filter(r => r.status !== 'ok');
+        allErrorDetails.push(...errors.map(e => ({
+          experienceId: expId,
+          status: e.status,
+          message: e.message || 'Bilinmeyen hata',
+          details: e.details || null
+        })));
+      }
+    } catch (error) {
+      console.error(`❌ ${expId || 'null'} - Expo Push Notification hatası:`, error.message);
+      totalFailed += tokens.length;
+      allErrorDetails.push({
+        experienceId: expId,
+        error: error.message
       });
     }
-
-    const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
-    const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
-    
-    // Hata detaylarını logla
-    let errorDetails = [];
-    if (failedCount > 0) {
-      const errors = result.data?.filter(r => r.status !== 'ok');
-      console.error('❌ Başarısız bildirimler:', JSON.stringify(errors, null, 2));
-      errorDetails = errors.map(e => ({
-        status: e.status,
-        message: e.message || 'Bilinmeyen hata',
-        details: e.details || null
-      }));
-    }
-
-    return { success: successCount, failed: failedCount, details: result.data, errorDetails };
-  } catch (error) {
-    console.error('❌ Expo Push Notification hatası:', error.message);
-    console.error('❌ Hata stack:', error.stack);
-    return { success: 0, failed: validTokens.length, error: error.message };
   }
+
+  console.log(`✅ Toplam: ${totalSuccess} başarılı, ❌ ${totalFailed} başarısız`);
+
+  return { 
+    success: totalSuccess, 
+    failed: totalFailed, 
+    errorDetails: allErrorDetails 
+  };
 }
 
 // ROUTES
@@ -407,8 +444,11 @@ app.post('/api/admin/send-notification', async (req, res) => {
           console.log(`📱 ${expId}: ${tokensByExpId[expId].length} token`);
         });
         
-        // ✅ TÜM TOKEN'LARI KULLAN - Filtreleme yok
-        tokensToSend = allTokens.map(t => t.token).filter(t => t && t.trim());
+        // ✅ TÜM TOKEN'LARI experienceId ile birlikte al - Gruplama için
+        tokensToSend = allTokens.map(t => ({
+          token: t.token,
+          experienceId: t.experienceId || null
+        })).filter(t => t.token && t.token.trim());
         console.log('✅ MongoDB\'den toplam token sayısı (TÜM PLATFORMLAR):', tokensToSend.length);
       } catch (error) {
         console.error('❌ MongoDB token okuma hatası:', error.message);
@@ -1010,13 +1050,10 @@ app.post('/api/admin/banner', async (req, res) => {
         const bannersCollection = db.collection('reklam_bannerlar');
         bannerCount = await bannersCollection.countDocuments({ position: String(position).trim() });
         
-        // Pazar-Taksi position'ları için 20 banner limiti, diğerleri için 10
-        const maxBanners = String(position).trim().startsWith('pazar-taksi-') ? 20 : 10;
-        
-        if (bannerCount >= maxBanners) {
+        if (bannerCount >= 10) {
           return res.status(400).json({ 
             success: false, 
-            error: `Bu position için maksimum ${maxBanners} banner eklenebilir. Önce bir banner silin.` 
+            error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
           });
         }
       } catch (error) {
@@ -1024,11 +1061,10 @@ app.post('/api/admin/banner', async (req, res) => {
       }
     } else {
       bannerCount = database.reklamBannerlar.filter(b => b.position === String(position).trim()).length;
-      const maxBanners = String(position).trim().startsWith('pazar-taksi-') ? 20 : 10;
-      if (bannerCount >= maxBanners) {
+      if (bannerCount >= 10) {
         return res.status(400).json({ 
           success: false, 
-          error: `Bu position için maksimum ${maxBanners} banner eklenebilir. Önce bir banner silin.` 
+          error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
         });
       }
     }
