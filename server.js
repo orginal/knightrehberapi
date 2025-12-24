@@ -247,6 +247,7 @@ app.get('/api/admin/mongo-status', async (req, res) => {
     let tokenCount = 0;
     let tokens = [];
     let ceylan26Count = 0;
+    let kartkediCount = 0;
     let mike0835Count = 0;
     let nullExpIdCount = 0;
     
@@ -258,6 +259,7 @@ app.get('/api/admin/mongo-status', async (req, res) => {
         
         // ExperienceId'ye göre say
         ceylan26Count = await tokensCollection.countDocuments({ experienceId: '@ceylan26/knight-rehber' });
+        kartkediCount = await tokensCollection.countDocuments({ experienceId: '@kartkedi/knight-rehber' });
         mike0835Count = await tokensCollection.countDocuments({ experienceId: '@mike0835/knight-rehber' });
         nullExpIdCount = await tokensCollection.countDocuments({ 
           $or: [
@@ -275,6 +277,7 @@ app.get('/api/admin/mongo-status', async (req, res) => {
       isConnected: isMongoConnected,
       tokenCount,
       ceylan26Count,
+      kartkediCount,
       mike0835Count,
       nullExpIdCount,
       tokens: tokens.map(t => ({
@@ -428,10 +431,12 @@ app.post('/api/admin/send-notification', async (req, res) => {
           console.log(`  - Token: ${t.token.substring(0, 30)}..., experienceId: ${t.experienceId || 'YOK'}`);
         });
         
-        // Sadece @ceylan26/knight-rehber experience ID'sine ait token'ları al
-        const tokens = await tokensCollection.find({ experienceId: '@ceylan26/knight-rehber' }).toArray();
+        // @ceylan26/knight-rehber veya @kartkedi/knight-rehber experience ID'sine ait token'ları al
+        const tokens = await tokensCollection.find({ 
+          experienceId: { $in: ['@ceylan26/knight-rehber', '@kartkedi/knight-rehber'] }
+        }).toArray();
         tokensToSend = tokens.map(t => t.token).filter(t => t && t.trim());
-        console.log('✅ MongoDB\'den token sayısı (@ceylan26/knight-rehber):', tokensToSend.length);
+        console.log('✅ MongoDB\'den token sayısı (@ceylan26 veya @kartkedi/knight-rehber):', tokensToSend.length);
         
         // Eski @mike0835 token'larını logla (silinebilir)
         const oldTokens = await tokensCollection.find({ experienceId: '@mike0835/knight-rehber' }).toArray();

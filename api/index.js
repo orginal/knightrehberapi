@@ -330,10 +330,12 @@ app.post('/api/admin/send-notification', async (req, res) => {
           console.log(`  - Token: ${t.token.substring(0, 30)}..., experienceId: ${t.experienceId || 'YOK'}`);
         });
         
-        // Sadece @ceylan26/knight-rehber experience ID'sine ait token'ları al
-        const tokens = await tokensCollection.find({ experienceId: '@ceylan26/knight-rehber' }).toArray();
+        // @ceylan26/knight-rehber veya @kartkedi/knight-rehber experience ID'sine ait token'ları al
+        const tokens = await tokensCollection.find({ 
+          experienceId: { $in: ['@ceylan26/knight-rehber', '@kartkedi/knight-rehber'] }
+        }).toArray();
         tokensToSend = tokens.map(t => t.token).filter(t => t && t.trim());
-        console.log('✅ MongoDB\'den token sayısı (@ceylan26/knight-rehber):', tokensToSend.length);
+        console.log('✅ MongoDB\'den token sayısı (@ceylan26 veya @kartkedi/knight-rehber):', tokensToSend.length);
         
         // Eski @mike0835 token'larını logla (silinebilir)
         const oldTokens = await tokensCollection.find({ experienceId: '@mike0835/knight-rehber' }).toArray();
