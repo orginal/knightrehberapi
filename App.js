@@ -518,16 +518,20 @@ const AuthProvider = ({ children }) => {
               
               try {
                 // Token options - Standalone APK'lar için experienceId ZORUNLU
-                // projectId: ceylan26 hesabına ait yeni projectId
+                // projectId: kartkedi hesabına ait projectId
                 const tokenOptions = {
                   projectId: '01db3b91-a023-4742-a675-e40753963569'
                 };
                 
-                // Standalone APK'lar için experienceId HER ZAMAN ekle
-                // Expo Go'da da zarar vermez, ama standalone APK'da olmadan çalışmaz
+                // Standalone APK/IPA'lar için experienceId sadece Android'de gerekli
+                // iOS'ta experienceId kullanılmaz, sadece projectId yeterli
+                let experienceIdToSend = null;
                 if (Platform.OS === 'android') {
-                  tokenOptions.experienceId = '@ceylan26/knight-rehber';
+                  tokenOptions.experienceId = '@kartkedi/knight-rehber';
+                  experienceIdToSend = '@kartkedi/knight-rehber';
                   console.log('📱 Android cihaz - experienceId eklendi:', tokenOptions.experienceId);
+                } else {
+                  console.log('🍎 iOS cihaz - experienceId kullanılmıyor');
                 }
                 
                 // Debug bilgileri
@@ -542,20 +546,27 @@ const AuthProvider = ({ children }) => {
                 console.log('✅ Expo Push Token alındı:', pushToken);
                 console.log('📱 Token uzunluğu:', pushToken.length);
                 console.log('📱 Token formatı:', pushToken.startsWith('ExponentPushToken[') ? 'Doğru' : 'Hatalı');
+                console.log('📱 Platform:', Platform.OS === 'ios' ? '🍎 iOS' : '📱 Android');
 
                 // Token'ı backend'e gönder
                 try {
                   console.log('📤 Token backend\'e gönderiliyor...');
                   console.log('📤 Token değeri:', pushToken);
                   console.log('📤 Backend URL:', 'https://knightrehberapi.vercel.app/api/push/register');
+                  console.log('📤 Experience ID gönderilecek:', experienceIdToSend || 'null (iOS)');
                   
+                  // Experience ID'yi backend'e gönder (iOS'ta null olacak)
                   const response = await fetch('https://knightrehberapi.vercel.app/api/push/register', {
                     method: 'POST',
                     headers: { 
                       'Content-Type': 'application/json',
                       'Accept': 'application/json'
                     },
-                    body: JSON.stringify({ token: pushToken })
+                    body: JSON.stringify({ 
+                      token: pushToken, 
+                      experienceId: experienceIdToSend,
+                      platform: Platform.OS // Platform bilgisini de gönder (debug için)
+                    })
                   });
                   
                   console.log('📤 Backend response status:', response.status);
@@ -923,16 +934,29 @@ const SettingsModal = ({ visible, onClose }) => {
                 onPress={() => {
                   Alert.alert(
                     '🔒 Gizlilik Politikası',
-                    'Gizlilik politikamızı görüntülemek için GitHub sayfasını açmak ister misiniz?',
-                    [
-                      { text: 'İptal', style: 'cancel' },
-                      { 
-                        text: 'Aç', 
-                        onPress: () => Linking.openURL('https://github.com/orginal/knightrehberapi/blob/main/PRIVACY_POLICY.md').catch(err => 
-                          Alert.alert('Hata', 'Link açılamadı. Lütfen daha sonra tekrar deneyin veya e-posta ile iletişime geçin: advertknightrehber@gmail.com')
-                        )
-                      }
-                    ]
+                    "Son Güncelleme: 22 Aralık 2025\n\n" +
+                    "Knight Rehber uygulaması olarak, kullanıcılarımızın gizliliğini korumak bizim için önemlidir.\n\n" +
+                    "TOPLANAN BİLGİLER:\n" +
+                    "• Push Notification Token: Bildirim göndermek için toplanır ve MongoDB'de güvenli şekilde saklanır.\n" +
+                    "• Cihaz Bilgileri: Platform bilgileri (iOS/Android) sadece teknik amaçlarla kullanılır.\n" +
+                    "• Kişisel bilgi (isim, email, telefon) TOPLANMAZ.\n\n" +
+                    "BİLGİLERİN KULLANIMI:\n" +
+                    "• Push Bildirimleri göndermek için\n" +
+                    "• Uygulama performansını iyileştirmek için\n" +
+                    "• Teknik destek sağlamak için\n\n" +
+                    "BİLGİ PAYLAŞIMI:\n" +
+                    "• Verileriniz ASLA satılmaz veya reklam amaçlı paylaşılmaz.\n" +
+                    "• Kullanılan servisler: Expo, MongoDB Atlas, Vercel (sadece hizmet sağlamak için)\n\n" +
+                    "VERİ GÜVENLİĞİ:\n" +
+                    "• Tüm veriler şifreli olarak MongoDB Atlas'ta saklanır.\n" +
+                    "• HTTPS ile güvenli aktarım sağlanır.\n\n" +
+                    "KULLANICI HAKLARI:\n" +
+                    "• Verilerinize erişim talep edebilirsiniz\n" +
+                    "• Verilerinizin silinmesini talep edebilirsiniz\n" +
+                    "• Bildirimleri cihaz ayarlarından kapatabilirsiniz\n\n" +
+                    "İletişim: advertknightrehber@gmail.com\n" +
+                    "Konu: Gizlilik Politikası Hakkında",
+                    [{ text: 'Tamam' }]
                   );
                 }}
               >
@@ -944,7 +968,7 @@ const SettingsModal = ({ visible, onClose }) => {
                 onPress={() => {
                   Alert.alert(
                     'Genel Sorumluluk Reddi Beyanı',
-                    "Knight Online'ın tüm hakları Mgame Corp.'a aittir ve Game Cafe Services, Inc. tarafından yayımlanır. Knight Rehber uygulaması, Mgame ve NTTGame'den bağımsızdır.Uygulama da bulunan bilgiler internet ortamından ve oyun içinden toplanan verilerle oluşturulmuştur. Verilerin doğruluğu garantisi verilmemektedir.Uygulamadaki verilere dayanarak oyun içi ya da dışı oluşabilecek sorunlardan KNIGHT REHBER uygulaması sorumlu tutulamaz.",
+                    "Knight Online'ın tüm hakları Mgame Corp.'a aittir ve Game Cafe Services, Inc. tarafından yayımlanır. Knight Rehber uygulaması, Mgame ve NTTGame'den bağımsızdır.Uygulama da bulunan bilgiler internet ortamından ve oyun içinden toplanan verilerle oluşturulmuştur. Verilerin doğruluğu garantisi verilmemektedir.Uygulamadaki verilere dayanarak oyun içi ya da dışı oluşabilecek sorunlardan KNIGHT REHBER uygulaması sorumlu tutulamaz.Pazar - Taksi sekmesinde alacağınız hizmet ve yapacağınız işlem tamamen kendi sorumluluğunuzdadır. Herhangi bir olumsuz durumda Knight Rehber uygulaması sorumlu tutulamaz.",
                     [{ text: 'Tamam' }]
                   );
                 }}
@@ -1013,6 +1037,8 @@ const DisclaimerModal = ({ visible, onAccept }) => {
               Uygulamada bulunan bilgiler internet ortamından ve oyun içinden toplanan verilerle oluşturulmuştur. Verilerin doğruluğu garantisi verilmemektedir.{'\n\n'}
               
               Uygulamadaki verilere dayanarak oyun içi ya da dışı oluşabilecek sorunlardan KNIGHT REHBER uygulaması sorumlu tutulamaz.{'\n\n'}
+              
+              Pazar - Taksi sekmesinde alacağınız hizmet ve yapacağınız işlem tamamen kendi sorumluluğunuzdadır. Herhangi bir olumsuz durumda Knight Rehber uygulaması sorumlu tutulamaz.{'\n\n'}
               
               Bu uygulamayı kullanarak yukarıdaki şartları kabul etmiş sayılırsınız.
             </Text>
@@ -1485,9 +1511,9 @@ const FarmGeliriScreen = () => {
         
         // Eğer 1 saatlik modda ve süre dolmuşsa
         if (state.mode === '1hour' && elapsed >= 3600) {
-          // Durumu temizle
+          // Durumu temizle ve sürenin dolduğunu belirt
           await AsyncStorage.removeItem('farmState');
-          return null;
+          return { ...state, expired: true }; // expired flag'i ekle
         }
         
         return state;
@@ -1507,11 +1533,122 @@ const FarmGeliriScreen = () => {
     }
   };
 
+  // ✅ Farm bitiş bildirimi tıklandığında modal aç
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+      const { data } = response.notification.request.content;
+      
+      // Farm bitiş bildirimi tıklandığında
+      if (data && data.type === 'farm_finished') {
+        console.log('📱 Farm bitiş bildirimi tıklandı, modal açılıyor...');
+        
+        // Farm state'i kontrol et ve modal aç
+        const checkAndOpenModal = async () => {
+          const savedState = await loadFarmState();
+          if (savedState) {
+            setMode(savedState.mode);
+            setInitialCoins(savedState.initialCoins || '');
+            setInitialPot(savedState.initialPot || '');
+            setInitialMana(savedState.initialMana || '');
+            setInitialWolf(savedState.initialWolf || '');
+            setInitialKitap(savedState.initialKitap || '');
+          }
+          
+          // Farm'ı durdur
+          setIsRunning(false);
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+          
+          // Bildirimi temizle
+          if (notificationIdRef.current) {
+            try {
+              await Notifications.cancelScheduledNotificationAsync(notificationIdRef.current);
+            } catch (error) {
+              console.error('Bildirim iptal hatası:', error);
+            }
+            notificationIdRef.current = null;
+          }
+          
+          // Durumu temizle ve modal aç
+          await clearFarmState();
+          setElapsedTime(0);
+          setShowResultModal(true);
+        };
+        
+        checkAndOpenModal();
+      }
+    });
+
+    return () => subscription.remove();
+  }, []);
+
+  // ✅ AppState değişikliğinde farm durumunu kontrol et
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        // Uygulama foreground'a geldiğinde farm durumunu kontrol et
+        const checkFarmStateOnForeground = async () => {
+          const savedState = await loadFarmState();
+          if (savedState) {
+            // Eğer süre dolmuşsa modal aç
+            if (savedState.expired) {
+              setMode(savedState.mode);
+              setInitialCoins(savedState.initialCoins || '');
+              setInitialPot(savedState.initialPot || '');
+              setInitialMana(savedState.initialMana || '');
+              setInitialWolf(savedState.initialWolf || '');
+              setInitialKitap(savedState.initialKitap || '');
+              setIsRunning(false);
+              setElapsedTime(0);
+              setShowResultModal(true);
+              
+              // Interval'ı temizle
+              if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+              }
+              
+              // Bildirimi temizle
+              if (notificationIdRef.current) {
+                try {
+                  await Notifications.cancelScheduledNotificationAsync(notificationIdRef.current);
+                } catch (error) {
+                  console.error('Bildirim iptal hatası:', error);
+                }
+                notificationIdRef.current = null;
+              }
+            }
+          }
+        };
+        
+        checkFarmStateOnForeground();
+      }
+    });
+
+    return () => subscription?.remove();
+  }, []);
+
   // Uygulama açıldığında kaydedilmiş durumu yükle
   useEffect(() => {
     const restoreFarmState = async () => {
       const savedState = await loadFarmState();
       if (savedState) {
+        // ✅ Eğer süre dolmuşsa farm'ı durdur ve modalı aç
+        if (savedState.expired) {
+          setMode(savedState.mode);
+          setInitialCoins(savedState.initialCoins || '');
+          setInitialPot(savedState.initialPot || '');
+          setInitialMana(savedState.initialMana || '');
+          setInitialWolf(savedState.initialWolf || '');
+          setInitialKitap(savedState.initialKitap || '');
+          setIsRunning(false);
+          setElapsedTime(0);
+          setShowResultModal(true); // Farm hesaplama modalını aç
+          return;
+        }
+
         setMode(savedState.mode);
         setInitialCoins(savedState.initialCoins || '');
         setInitialPot(savedState.initialPot || '');
@@ -1531,6 +1668,14 @@ const FarmGeliriScreen = () => {
           // Geri sayım: 3600'den başlayıp 0'a iner
           const remaining = Math.max(0, 3600 - elapsed);
           setElapsedTime(remaining);
+          
+          // ✅ Eğer süre dolmuşsa farm'ı durdur ve modalı aç
+          if (remaining === 0) {
+            setIsRunning(false);
+            await clearFarmState();
+            setShowResultModal(true);
+            // Bildirim zaten zamanlanmış olmalı, burada tekrar göndermeye gerek yok
+          }
         } else {
           // İleri sayım: 0'dan başlayıp artar
           setElapsedTime(elapsed);
@@ -1570,14 +1715,21 @@ const FarmGeliriScreen = () => {
           });
         }
         
+        // iOS için bildirim içeriği hazırla
+        const notificationContent = {
+          title: '⏰ Farm Bitti',
+          body: 'Farm süreniz doldu! Sonuçları girebilirsiniz.',
+          sound: true,
+          data: { type: 'farm_finished' }, // Farm bildirimi olduğunu belirt
+        };
+        
+        // Android için priority ekle (iOS'ta desteklenmez)
+        if (Platform.OS === 'android') {
+          notificationContent.priority = Notifications.AndroidNotificationPriority.MAX;
+        }
+        
         await Notifications.scheduleNotificationAsync({
-          content: {
-            title: '⏰ Farm Bitti',
-            body: 'Farm süreniz doldu! Sonuçları girebilirsiniz.',
-            sound: true,
-            priority: Notifications.AndroidNotificationPriority.MAX,
-            data: { type: 'farm_finished' }, // Farm bildirimi olduğunu belirt
-          },
+          content: notificationContent,
           ...(Platform.OS === 'android' && { 
             channelId: 'farm', // Farm bildirimleri için ayrı channel
           }),
@@ -1626,13 +1778,22 @@ const FarmGeliriScreen = () => {
         }
         
         await Notifications.scheduleNotificationAsync({
-          content: {
-            title: mode === '1hour' ? '🚀 Farm Başladı (1 Saatlik)' : '🚀 Farm Başladı (Süresiz)',
-            body: mode === '1hour' ? 'Farm başladı! 60 dakika sonra bildirim alacaksınız.' : 'Farm başladı! İstediğiniz zaman durdurabilirsiniz.',
-            sound: true,
-            priority: Notifications.AndroidNotificationPriority.MAX,
-            data: { type: 'farm_started' }, // Farm bildirimi olduğunu belirt
-          },
+          content: (() => {
+            // iOS için bildirim içeriği hazırla
+            const startNotificationContent = {
+              title: mode === '1hour' ? '🚀 Farm Başladı (1 Saatlik)' : '🚀 Farm Başladı (Süresiz)',
+              body: mode === '1hour' ? 'Farm başladı! 60 dakika sonra bildirim alacaksınız.' : 'Farm başladı! İstediğiniz zaman durdurabilirsiniz.',
+              sound: true,
+              data: { type: 'farm_started' }, // Farm bildirimi olduğunu belirt
+            };
+            
+            // Android için priority ekle (iOS'ta desteklenmez)
+            if (Platform.OS === 'android') {
+              startNotificationContent.priority = Notifications.AndroidNotificationPriority.MAX;
+            }
+            
+            return startNotificationContent;
+          })(),
           ...(Platform.OS === 'android' && { 
             channelId: 'farm', // Farm bildirimleri için ayrı channel
           }),
@@ -1743,6 +1904,60 @@ const FarmGeliriScreen = () => {
 
     // Farm başladı bildirimi gönder
     sendStartNotification();
+
+    // ✅ 1 saatlik modda 60 dakika sonrası için bildirim zamanla (uygulama kapalıyken de çalışır)
+    if (mode === '1hour') {
+      try {
+        const { status } = await Notifications.getPermissionsAsync();
+        if (status === 'granted') {
+          // Farm bildirimleri için channel oluştur (zaten varsa sorun olmaz)
+          if (Platform.OS === 'android') {
+            await Notifications.setNotificationChannelAsync('farm', {
+              name: 'Farm Bildirimleri',
+              importance: Notifications.AndroidImportance.MAX,
+              vibrationPattern: [0, 250, 250, 250],
+              lightColor: '#FFD66B',
+              sound: true,
+              enableLights: true,
+              enableVibrate: true,
+              showBadge: true,
+            });
+          }
+
+          // 60 dakika sonrası için bildirim zamanla
+          const finishTime = new Date(startTimeNow.getTime() + 3600 * 1000); // 3600 saniye = 60 dakika
+          
+          // iOS için bildirim içeriği hazırla
+          const notificationContent = {
+            title: '⏰ Farm Bitti',
+            body: 'Farm süreniz doldu! Sonuçları girebilirsiniz.',
+            sound: true,
+            data: { type: 'farm_finished' },
+          };
+          
+          // Android için priority ekle (iOS'ta desteklenmez)
+          if (Platform.OS === 'android') {
+            notificationContent.priority = Notifications.AndroidNotificationPriority.MAX;
+          }
+          
+          const notificationId = await Notifications.scheduleNotificationAsync({
+            content: notificationContent,
+            ...(Platform.OS === 'android' && { 
+              channelId: 'farm',
+            }),
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.DATE,
+              date: finishTime,
+            },
+          });
+          
+          notificationIdRef.current = notificationId;
+          console.log(`✅ Farm bitti bildirimi zamanlandı: ${finishTime.toISOString()}`);
+        }
+      } catch (error) {
+        console.error('❌ Farm bildirimi zamanlama hatası:', error);
+      }
+    }
   };
 
   // Sıfırla
@@ -5551,8 +5766,8 @@ const GoldbarPrices = () => {
 // Merchant Alt Sekmeleri
 const MerchantScreen = ({ activeSubTab, setActiveSubTab }) => {
   const merchantSubTabs = [
+    { id: 'goldbar', icon: require('./assets/goldbar-3677.jpg'), label: 'Goldbar', url: 'https://www.enucuzgb.com', useImage: true },
     { id: 'pazar', icon: '💰', label: 'Pazar', url: 'https://www.uskopazar.com' },
-    { id: 'goldbar', icon: '💎', label: 'Goldbar', url: 'https://www.enucuzgb.com' },
   ];
 
   const [showWebView, setShowWebView] = useState(false);
@@ -5595,12 +5810,23 @@ const MerchantScreen = ({ activeSubTab, setActiveSubTab }) => {
                 ]}
                 onPress={() => setActiveSubTab(tab.id)}
               >
-                <Text style={[
-                  styles.enhancedSubTabIcon,
-                  activeSubTab === tab.id && styles.enhancedSubTabIconActive
-                ]}>
-                  {tab.icon}
-                </Text>
+                {tab.useImage ? (
+                  <Image 
+                    source={tab.icon} 
+                    style={[
+                      styles.enhancedSubTabImage,
+                      activeSubTab === tab.id && styles.enhancedSubTabImageActive
+                    ]}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <Text style={[
+                    styles.enhancedSubTabIcon,
+                    activeSubTab === tab.id && styles.enhancedSubTabIconActive
+                  ]}>
+                    {tab.icon}
+                  </Text>
+                )}
                 <Text style={[
                   styles.enhancedSubTabText,
                   activeSubTab === tab.id && styles.enhancedSubTabTextActive
@@ -5652,14 +5878,136 @@ const MerchantScreen = ({ activeSubTab, setActiveSubTab }) => {
   );
 };
 
-// Karakter Alt Sekmeleri
-const KarakterScreen = ({ activeSubTab, setActiveSubTab }) => {
-  const karakterSubTabs = [
-    { id: 'basitAtakHesaplama', icon: '⚔️', label: 'Basit Atak', url: 'https://www.kobugda.com/Calculator' },
-    { id: 'skillHesaplama', icon: '🔮', label: 'Skill Hesapla', url: 'https://www.kobugda.com/SkillCalculator' },
-    { id: 'charDiz', icon: '👤', label: 'Char Diz', url: 'https://www.kobugda.com/Calculator/Calculator' },
+// Pazar-Taksi Sekmesi
+const PazarTaksiScreen = ({ activeSubTab, setActiveSubTab }) => {
+  const [serverSubTab, setServerSubTab] = useState('pazarcilar'); // Varsayılan alt sekme: Pazarcılar
+
+  const pazarTaksiSubTabs = [
+    { id: 'zero', icon: '🌐', label: 'Zero' },
+    { id: 'agartha', icon: '🏛️', label: 'Agartha' },
+    { id: 'pandora', icon: '📦', label: 'Pandora' },
+    { id: 'felis', icon: '🐱', label: 'Felis' },
+    { id: 'dryads', icon: '🌿', label: 'Dryads' },
+    { id: 'destan', icon: '⚔️', label: 'Destan' },
+    { id: 'minark', icon: '🏰', label: 'Minark' },
+    { id: 'oreads', icon: '⛰️', label: 'Oreads' },
+    { id: 'zion', icon: '🎮', label: 'Zion(steamko)' },
   ];
 
+  // Her sunucu için alt sekmeler
+  const serverSubTabs = [
+    { id: 'pazarcilar', icon: '🛒', label: 'Pazarcılar' },
+    { id: 'taksi', icon: '🚕', label: 'Taksi Hizmeti(exp taksi)' },
+  ];
+
+  // Aktif sunucu ve alt sekme belirleme
+  const currentServer = activeSubTab || 'zero';
+  const currentServerSubTab = serverSubTab;
+
+  // Sunucu değiştiğinde alt sekmeyi varsayılana sıfırla
+  useEffect(() => {
+    if (pazarTaksiSubTabs.find(t => t.id === activeSubTab)) {
+      setServerSubTab('pazarcilar');
+    }
+  }, [activeSubTab]);
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+      <View style={styles.tabContent}>
+        <Text style={styles.homeTitle}>🚕 Pazar-Taksi</Text>
+        
+        {/* Sunucu sekmeleri (yatay) */}
+        <View style={styles.enhancedSubTabContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.enhancedSubTabContent}
+          >
+            {pazarTaksiSubTabs.map((tab) => (
+              <TouchableOpacity 
+                key={tab.id}
+                style={[
+                  styles.enhancedSubTabButton,
+                  currentServer === tab.id && styles.enhancedSubTabButtonActive
+                ]}
+                onPress={() => setActiveSubTab(tab.id)}
+              >
+                <Text style={[
+                  styles.enhancedSubTabIcon,
+                  currentServer === tab.id && styles.enhancedSubTabIconActive
+                ]}>
+                  {tab.icon}
+                </Text>
+                <Text style={[
+                  styles.enhancedSubTabText,
+                  currentServer === tab.id && styles.enhancedSubTabTextActive
+                ]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Alt sekmeler (Pazarcılar / Taksi) - yatay */}
+        <View style={[styles.masterSubTabContainer, { marginTop: 0, marginBottom: 0 }]}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.masterSubTabContent}
+          >
+            {serverSubTabs.map((tab) => (
+              <TouchableOpacity 
+                key={tab.id}
+                style={[
+                  styles.masterSubTabButton,
+                  currentServerSubTab === tab.id && styles.masterSubTabButtonActive
+                ]}
+                onPress={() => setServerSubTab(tab.id)}
+              >
+                <Text style={[
+                  styles.masterSubTabIcon,
+                  currentServerSubTab === tab.id && styles.masterSubTabIconActive
+                ]}>
+                  {tab.icon}
+                </Text>
+                <Text style={[
+                  styles.masterSubTabText,
+                  currentServerSubTab === tab.id && styles.masterSubTabTextActive
+                ]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Banner'lar - position formatı: pazar-taksi-{sunucu}-{alt-sekme} */}
+        <ReklamBanner position={`pazar-taksi-${currentServer}-${currentServerSubTab}`} />
+
+        {/* İçerik */}
+        <View style={styles.card}>
+          <Text style={styles.eventName}>
+            {pazarTaksiSubTabs.find(t => t.id === currentServer)?.icon} {pazarTaksiSubTabs.find(t => t.id === currentServer)?.label} - {serverSubTabs.find(t => t.id === currentServerSubTab)?.label}
+          </Text>
+          <Text style={styles.muted}>
+            {pazarTaksiSubTabs.find(t => t.id === currentServer)?.label} - {serverSubTabs.find(t => t.id === currentServerSubTab)?.label} içeriği yakında eklenecektir.
+          </Text>
+        </View>
+      </View>
+    </ScrollView>
+  );
+};
+
+// REHBER BİLEŞENİ
+const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [gorevlerSubTab, setGorevlerSubTab] = useState('gorevler'); // Görevler alt sekmesi (varsayılan: Görevler)
+  const [monsterSubTab, setMonsterSubTab] = useState('monster'); // Monster alt sekmesi
+  const [reportSubTab, setReportSubTab] = useState('report'); // Raporlama Sistemi alt sekmesi
+  const [alSkillStatSubTab, setAlSkillStatSubTab] = useState('skillstat'); // AL Skill Stat alt sekmesi (varsayılan: Skill-Stat)
+  const [karakterSubTab, setKarakterSubTab] = useState('charDiz'); // Karakter alt sekmesi (varsayılan: Char Diz)
+  
   const [showWebView, setShowWebView] = useState(false);
   const [webViewUrl, setWebViewUrl] = useState('');
   const [webViewTitle, setWebViewTitle] = useState('');
@@ -5670,139 +6018,46 @@ const KarakterScreen = ({ activeSubTab, setActiveSubTab }) => {
     setShowWebView(true);
   };
 
-  if (showWebView) {
-    return (
-      <WebViewScreen 
-        url={webViewUrl}
-        title={webViewTitle}
-        onBack={() => setShowWebView(false)}
-      />
-    );
-  }
-
-  return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
-      <View style={styles.tabContent}>
-        <Text style={styles.homeTitle}>👤 Karakter</Text>
-        
-        <View style={styles.enhancedSubTabContainer}>
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false} 
-            contentContainerStyle={styles.enhancedSubTabContent}
-          >
-            {karakterSubTabs.map((tab) => (
-              <TouchableOpacity 
-                key={tab.id}
-                style={[
-                  styles.enhancedSubTabButton,
-                  activeSubTab === tab.id && styles.enhancedSubTabButtonActive
-                ]}
-                onPress={() => setActiveSubTab(tab.id)}
-              >
-                <Text style={[
-                  styles.enhancedSubTabIcon,
-                  activeSubTab === tab.id && styles.enhancedSubTabIconActive
-                ]}>
-                  {tab.icon}
-                </Text>
-                <Text style={[
-                  styles.enhancedSubTabText,
-                  activeSubTab === tab.id && styles.enhancedSubTabTextActive
-                ]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-
-        {activeSubTab === 'basitAtakHesaplama' && (
-          <ReklamBanner position="karakter" />
-        )}
-        
-        {activeSubTab === 'skillHesaplama' && (
-          <ReklamBanner position="skill" />
-        )}
-        
-        {activeSubTab === 'charDiz' && (
-          <ReklamBanner position="chardiz" />
-        )}
-
-        <View style={styles.card}>
-          {activeSubTab === 'basitAtakHesaplama' && (
-            <>
-              <Text style={styles.eventName}>⚔️ Basit Atak Hesaplama</Text>
-              <Text style={styles.muted}>
-                Karakterinizin basit atak değerlerini hesaplamak için aşağıdaki butona tıklayın:
-              </Text>
-              
-              <TouchableOpacity 
-                style={styles.linkButton}
-                onPress={() => handleLinkPress('https://www.kobugda.com/Calculator', 'Basit Atak Hesaplama')}
-              >
-                <Text style={styles.linkButtonText}>⚔️ Basit Atak Hesaplama </Text>
-              </TouchableOpacity>
-            </>
-          )}
-          
-          {activeSubTab === 'skillHesaplama' && (
-            <>
-              <Text style={styles.eventName}>🔮 Skill Hesaplama</Text>
-              <Text style={styles.muted}>
-                Skill puanlarınızı hesaplamak ve dağıtmak için aşağıdaki butona tıklayın:
-              </Text>
-              
-              <TouchableOpacity 
-                style={styles.linkButton}
-                onPress={() => handleLinkPress('https://www.kobugda.com/SkillCalculator', 'Skill Hesaplama')}
-              >
-                <Text style={styles.linkButtonText}>🔮 Skill Hesaplama </Text>
-              </TouchableOpacity>
-            </>
-          )}
-          
-          {activeSubTab === 'charDiz' && (
-            <>
-              <Text style={styles.eventName}>👤 Char Diz</Text>
-              <Text style={styles.muted}>
-                Karakterinizi optimize etmek için char diz aracını kullanmak için aşağıdaki butona tıklayın:
-              </Text>
-              
-              <TouchableOpacity 
-                style={styles.linkButton}
-                onPress={() => handleLinkPress('https://www.kobugda.com/Calculator/Calculator', 'Char Diz')}
-              >
-                <Text style={styles.linkButtonText}>👤 Char Diz</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      </View>
-    </ScrollView>
-  );
-};
-
-// REHBER BİLEŞENİ
-const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [masterSubTab, setMasterSubTab] = useState('master'); // Master alt sekmesi
-  const [alSkillStatSubTab, setAlSkillStatSubTab] = useState('skillstat'); // AL Skill Stat alt sekmesi (varsayılan: Skill-Stat)
+  // Karakter alt sekmeleri
+  const karakterSubTabs = [
+    { id: 'charDiz', icon: '👤', label: 'Char Diz', url: 'https://www.kobugda.com/Calculator/Calculator' },
+    { id: 'skillHesaplama', icon: '🔮', label: 'Skill Hesapla', url: 'https://www.kobugda.com/SkillCalculator' },
+    { id: 'basitAtakHesaplama', icon: '⚔️', label: 'Basit Atak', url: 'https://www.kobugda.com/Calculator' },
+  ];
 
   // Ana menü sekmeleri
   const mainMenuItems = [
-    { id: 'master', icon: '⚔️', label: 'Master', hasSubMenu: true },
-    { id: 'alskillstat', icon: '📈', label: 'Skil/Stat/Exp', hasSubMenu: true },
-    { id: 'gorevler', icon: '📋', label: 'Görevler', hasSubMenu: false },
-    { id: 'achievements', icon: '🏆', label: 'Achievements', hasSubMenu: false },
     { id: 'farm', icon: '💰', label: 'Farm Geliri Hesapla', hasSubMenu: false },
-    { id: 'monster', icon: '👹', label: 'Knight Online Monster', hasSubMenu: false },
+    { id: 'karakter', icon: '👤', label: 'Karakter', hasSubMenu: true },
+    { id: 'droplist', icon: '📦', label: 'Droplist', hasSubMenu: false, comingSoon: true },
+    { id: 'level', icon: '📊', label: 'Level hesapla', hasSubMenu: false, comingSoon: true },
+    { id: 'shozin', icon: '🔨', label: 'Shozin craft', hasSubMenu: false, comingSoon: true },
+    { id: 'pus', icon: '💎', label: 'P.U.S', hasSubMenu: false, comingSoon: true },
+    { id: 'gorevler', icon: '📋', label: 'Görevler', hasSubMenu: true },
+    { id: 'alskillstat', icon: '📈', label: 'Skil/Stat/Exp', hasSubMenu: true },
+    { id: 'achievements', icon: '🏆', label: 'Achievements', hasSubMenu: false },
+    { id: 'monster', icon: '👹', label: 'Knight Online Monster', hasSubMenu: true },
+    { id: 'report', icon: '📝', label: 'Raporlama Sistemi', hasSubMenu: true },
   ];
 
-  // Master alt sekmeleri
-  const masterSubTabs = [
+  // Görevler alt sekmeleri
+  const gorevlerSubTabs = [
+    { id: 'gorevler', icon: '📋', label: 'Görevler' },
     { id: 'master', icon: '⚔️', label: 'Master' },
     { id: 'masterSkill', icon: '🔮', label: 'Master Skill' },
+  ];
+
+
+  // Monster alt sekmeleri
+  const monsterSubTabs = [
+    { id: 'monster', icon: '👹', label: 'Knight Online Monster' },
+    { id: 'boss', icon: '👑', label: 'Knight Online Boss', comingSoon: true },
+  ];
+
+  // Raporlama Sistemi alt sekmeleri
+  const reportSubTabs = [
+    { id: 'report', icon: '📝', label: 'Raporlama Sistemi (Cheat Reports)', comingSoon: true },
+    { id: 'faq', icon: '❓', label: 'Sıkça Sorulan Sorular', comingSoon: true },
   ];
 
   // AL Skill Stat alt sekmeleri
@@ -5813,14 +6068,55 @@ const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
   ];
 
   const renderContent = () => {
-    // Eğer master sekmesi veya masterSkill seçiliyse, alt sekme içeriğini göster
-    if (activeSubTab === 'master' || activeSubTab === 'masterSkill') {
+    // Eğer görevler, master veya masterSkill seçiliyse, alt sekme içeriğini göster
+    if (activeSubTab === 'gorevler' || activeSubTab === 'master' || activeSubTab === 'masterSkill') {
       // activeSubTab değerine göre içerik göster
-      if (activeSubTab === 'masterSkill') {
+      if (activeSubTab === 'gorevler') {
+        return <GorevlerScreen />;
+      } else if (activeSubTab === 'masterSkill') {
         return <MasterSkillScreen />;
-      } else if (activeSubTab === 'master' || masterSubTab === 'master') {
+      } else if (activeSubTab === 'master') {
         return <MasterScreen />;
       }
+    }
+
+    // Eğer monster veya boss seçiliyse, alt sekme içeriğini göster
+    if (activeSubTab === 'monster' || activeSubTab === 'boss') {
+      if (activeSubTab === 'monster') {
+        return <MonsterScreen />;
+      } else if (activeSubTab === 'boss') {
+        return (
+          <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+            <View style={styles.tabContent}>
+              <View style={styles.card}>
+                <Text style={styles.eventName}>👑 Knight Online Boss</Text>
+                <Text style={styles.muted}>
+                  Knight Rehber 1.1 güncellemesinde eklenecektir. Uygulamanız daima güncel olsun.
+                </Text>
+              </View>
+            </View>
+          </ScrollView>
+        );
+      }
+    }
+
+    // Eğer report veya faq seçiliyse, alt sekme içeriğini göster
+    if (activeSubTab === 'report' || activeSubTab === 'faq') {
+      return (
+        <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+          <View style={styles.tabContent}>
+            <View style={styles.card}>
+              <Text style={styles.eventName}>
+                {activeSubTab === 'report' && '📝 Raporlama Sistemi (Cheat Reports)'}
+                {activeSubTab === 'faq' && '❓ Sıkça Sorulan Sorular'}
+              </Text>
+              <Text style={styles.muted}>
+                Knight Rehber 1.1 güncellemesinde eklenecektir. Uygulamanız daima güncel olsun.
+              </Text>
+            </View>
+          </View>
+        </ScrollView>
+      );
     }
 
     // Eğer AL Skill Stat, Skill-Stat veya Rebirth sekmesi seçiliyse, alt sekme içeriğini göster
@@ -5836,14 +6132,31 @@ const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
 
     // Diğer sekmeler
     switch(activeSubTab) {
-      case 'gorevler': 
-        return <GorevlerScreen />;
-      case 'achievements':
-        return <AchievementsScreen />;
       case 'farm':
         return <FarmGeliriScreen />;
-      case 'monster':
-        return <MonsterScreen />;
+      case 'droplist':
+      case 'level':
+      case 'shozin':
+      case 'pus':
+        return (
+          <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+            <View style={styles.tabContent}>
+              <View style={styles.card}>
+                <Text style={styles.eventName}>
+                  {activeSubTab === 'droplist' && '📦 Droplist'}
+                  {activeSubTab === 'level' && '📊 Level hesapla'}
+                  {activeSubTab === 'shozin' && '🔨 Shozin craft'}
+                  {activeSubTab === 'pus' && '💎 P.U.S'}
+                </Text>
+                <Text style={styles.muted}>
+                  Knight Rehber 1.1 güncellemesinde eklenecektir. Uygulamanız daima güncel olsun.
+                </Text>
+              </View>
+            </View>
+          </ScrollView>
+        );
+      case 'achievements':
+        return <AchievementsScreen />;
       default:
         // Varsayılan: Hoş geldin mesajı
         return (
@@ -5873,8 +6186,11 @@ const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
           style={styles.backButtonRehber}
           onPress={() => {
             setActiveSubTab(null);
-            setMasterSubTab('master'); // Master alt sekmesini sıfırla
-            setAlSkillStatSubTab('alskillstat'); // AL Skill Stat alt sekmesini sıfırla
+            setGorevlerSubTab('gorevler'); // Görevler alt sekmesini sıfırla
+            setMonsterSubTab('monster'); // Monster alt sekmesini sıfırla
+            setReportSubTab('report'); // Raporlama Sistemi alt sekmesini sıfırla
+            setAlSkillStatSubTab('skillstat'); // AL Skill Stat alt sekmesini sıfırla
+            setKarakterSubTab('charDiz'); // Karakter alt sekmesini sıfırla
             setMenuVisible(false);
           }}
         >
@@ -5916,12 +6232,25 @@ const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
                   <TouchableOpacity
                     style={[
                       styles.menuItem,
-                      (activeSubTab === item.id || (item.id === 'master' && (activeSubTab === 'master' || activeSubTab === 'masterSkill')) || (item.id === 'alskillstat' && (activeSubTab === 'skillstat' || activeSubTab === 'alskillstat' || activeSubTab === 'rebirth'))) && styles.menuItemActive
+                      (activeSubTab === item.id || (item.id === 'gorevler' && (activeSubTab === 'gorevler' || activeSubTab === 'master' || activeSubTab === 'masterSkill')) || (item.id === 'monster' && (activeSubTab === 'monster' || activeSubTab === 'boss')) || (item.id === 'report' && (activeSubTab === 'report' || activeSubTab === 'faq')) || (item.id === 'alskillstat' && (activeSubTab === 'skillstat' || activeSubTab === 'alskillstat' || activeSubTab === 'rebirth')) || (item.id === 'karakter' && (activeSubTab === 'karakter' || activeSubTab === 'charDiz' || activeSubTab === 'skillHesaplama' || activeSubTab === 'basitAtakHesaplama'))) && styles.menuItemActive,
+                      item.comingSoon && styles.menuItemComingSoon
                     ]}
                     onPress={() => {
-                      if (item.id === 'master') {
-                        setActiveSubTab('master');
-                        setMasterSubTab('master'); // Varsayılan alt sekme
+                      if (item.comingSoon && !item.hasSubMenu) {
+                        // Coming soon sekmeleri için sadece içerik göster (alt menüsü yoksa)
+                        setActiveSubTab(item.id);
+                        setMenuVisible(false);
+                        return;
+                      }
+                      if (item.id === 'gorevler') {
+                        setActiveSubTab('gorevler'); // Varsayılan olarak Görevler'i göster
+                        setGorevlerSubTab('gorevler'); // Varsayılan alt sekme
+                      } else if (item.id === 'monster') {
+                        setActiveSubTab('monster'); // Varsayılan olarak Monster'ı göster
+                        setMonsterSubTab('monster'); // Varsayılan alt sekme
+                      } else if (item.id === 'report') {
+                        setActiveSubTab('report'); // Varsayılan olarak Raporlama'yı göster
+                        setReportSubTab('report'); // Varsayılan alt sekme
                       } else if (item.id === 'alskillstat') {
                         setActiveSubTab('skillstat'); // Varsayılan olarak Skill-Stat'i göster
                         setAlSkillStatSubTab('skillstat'); // Varsayılan alt sekme
@@ -5934,24 +6263,26 @@ const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
                     <Text style={styles.menuItemIcon}>{item.icon}</Text>
                     <Text style={[
                       styles.menuItemText,
-                      activeSubTab === item.id && styles.menuItemTextActive
+                      activeSubTab === item.id && styles.menuItemTextActive,
+                      item.comingSoon && styles.menuItemTextComingSoon
                     ]}>
                       {item.label}
+                      {item.comingSoon && ' (Yakında)'}
                     </Text>
                   </TouchableOpacity>
 
-                  {/* Master alt sekmeleri - sadece master seçiliyse ve menü açıksa göster */}
-                  {item.id === 'master' && (activeSubTab === 'master' || activeSubTab === 'masterSkill') && (
+                  {/* Görevler alt sekmeleri - sadece gorevler seçiliyse ve menü açıksa göster */}
+                  {item.id === 'gorevler' && (activeSubTab === 'gorevler' || activeSubTab === 'master' || activeSubTab === 'masterSkill') && (
                     <View style={styles.subMenuContainer}>
-                      {masterSubTabs.map((subTab) => (
+                      {gorevlerSubTabs.map((subTab) => (
                         <TouchableOpacity
                           key={subTab.id}
                           style={[
                             styles.subMenuItem,
-                            (masterSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemActive
+                            (gorevlerSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemActive
                           ]}
                           onPress={() => {
-                            setMasterSubTab(subTab.id);
+                            setGorevlerSubTab(subTab.id);
                             setActiveSubTab(subTab.id);
                             setMenuVisible(false);
                           }}
@@ -5959,9 +6290,67 @@ const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
                           <Text style={styles.subMenuItemIcon}>{subTab.icon}</Text>
                           <Text style={[
                             styles.subMenuItemText,
-                            (masterSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemTextActive
+                            (gorevlerSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemTextActive
                           ]}>
                             {subTab.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Monster alt sekmeleri - sadece monster seçiliyse ve menü açıksa göster */}
+                  {item.id === 'monster' && (activeSubTab === 'monster' || activeSubTab === 'boss') && (
+                    <View style={styles.subMenuContainer}>
+                      {monsterSubTabs.map((subTab) => (
+                        <TouchableOpacity
+                          key={subTab.id}
+                          style={[
+                            styles.subMenuItem,
+                            (monsterSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemActive
+                          ]}
+                          onPress={() => {
+                            setMonsterSubTab(subTab.id);
+                            setActiveSubTab(subTab.id);
+                            setMenuVisible(false);
+                          }}
+                        >
+                          <Text style={styles.subMenuItemIcon}>{subTab.icon}</Text>
+                          <Text style={[
+                            styles.subMenuItemText,
+                            (monsterSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemTextActive
+                          ]}>
+                            {subTab.label}
+                            {subTab.comingSoon && ' (Yakında)'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Raporlama Sistemi alt sekmeleri - sadece report seçiliyse ve menü açıksa göster */}
+                  {item.id === 'report' && (activeSubTab === 'report' || activeSubTab === 'faq') && (
+                    <View style={styles.subMenuContainer}>
+                      {reportSubTabs.map((subTab) => (
+                        <TouchableOpacity
+                          key={subTab.id}
+                          style={[
+                            styles.subMenuItem,
+                            (reportSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemActive
+                          ]}
+                          onPress={() => {
+                            setReportSubTab(subTab.id);
+                            setActiveSubTab(subTab.id);
+                            setMenuVisible(false);
+                          }}
+                        >
+                          <Text style={styles.subMenuItemIcon}>{subTab.icon}</Text>
+                          <Text style={[
+                            styles.subMenuItemText,
+                            (reportSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemTextActive
+                          ]}>
+                            {subTab.label}
+                            {subTab.comingSoon && ' (Yakında)'}
                           </Text>
                         </TouchableOpacity>
                       ))}
@@ -5995,6 +6384,34 @@ const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
                       ))}
                     </View>
                   )}
+
+                  {/* Karakter alt sekmeleri - sadece karakter seçiliyse ve menü açıksa göster */}
+                  {item.id === 'karakter' && (activeSubTab === 'karakter' || activeSubTab === 'charDiz' || activeSubTab === 'skillHesaplama' || activeSubTab === 'basitAtakHesaplama') && (
+                    <View style={styles.subMenuContainer}>
+                      {karakterSubTabs.map((subTab) => (
+                        <TouchableOpacity
+                          key={subTab.id}
+                          style={[
+                            styles.subMenuItem,
+                            (karakterSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemActive
+                          ]}
+                          onPress={() => {
+                            setKarakterSubTab(subTab.id);
+                            setActiveSubTab(subTab.id);
+                            setMenuVisible(false);
+                          }}
+                        >
+                          <Text style={styles.subMenuItemIcon}>{subTab.icon}</Text>
+                          <Text style={[
+                            styles.subMenuItemText,
+                            (karakterSubTab === subTab.id || activeSubTab === subTab.id) && styles.subMenuItemTextActive
+                          ]}>
+                            {subTab.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                 </View>
               ))}
             </ScrollView>
@@ -6002,40 +6419,159 @@ const RehberScreen = ({ activeSubTab, setActiveSubTab }) => {
         </View>
       )}
 
-      {/* Master alt sekmeleri - Master seçiliyse göster */}
-      {(activeSubTab === 'master' || activeSubTab === 'masterSkill') && (
+      {/* Görevler alt sekmeleri - Görevler seçiliyse göster */}
+      {(activeSubTab === 'gorevler' || activeSubTab === 'master' || activeSubTab === 'masterSkill') && (
         <View style={styles.masterSubTabContainer}>
           <ScrollView 
             horizontal 
             showsHorizontalScrollIndicator={false} 
             contentContainerStyle={styles.masterSubTabContent}
           >
-            {masterSubTabs.map((tab) => (
+            {gorevlerSubTabs.map((tab) => (
               <TouchableOpacity 
                 key={tab.id}
                 style={[
                   styles.masterSubTabButton,
-                  masterSubTab === tab.id && styles.masterSubTabButtonActive
+                  gorevlerSubTab === tab.id && styles.masterSubTabButtonActive
                 ]}
                 onPress={() => {
-                  setMasterSubTab(tab.id);
+                  setGorevlerSubTab(tab.id);
                   setActiveSubTab(tab.id);
                 }}
               >
                 <Text style={[
                   styles.masterSubTabIcon,
-                  masterSubTab === tab.id && styles.masterSubTabIconActive
+                  gorevlerSubTab === tab.id && styles.masterSubTabIconActive
                 ]}>
                   {tab.icon}
                 </Text>
                 <Text style={[
                   styles.masterSubTabText,
-                  masterSubTab === tab.id && styles.masterSubTabTextActive
+                  gorevlerSubTab === tab.id && styles.masterSubTabTextActive
                 ]}>
                   {tab.label}
                 </Text>
               </TouchableOpacity>
             ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Monster alt sekmeleri - Monster seçiliyse göster */}
+      {(activeSubTab === 'monster' || activeSubTab === 'boss') && (
+        <View style={styles.masterSubTabContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.masterSubTabContent}
+          >
+            {monsterSubTabs.map((tab) => (
+              <TouchableOpacity 
+                key={tab.id}
+                style={[
+                  styles.masterSubTabButton,
+                  monsterSubTab === tab.id && styles.masterSubTabButtonActive
+                ]}
+                onPress={() => {
+                  setMonsterSubTab(tab.id);
+                  setActiveSubTab(tab.id);
+                }}
+              >
+                <Text style={[
+                  styles.masterSubTabIcon,
+                  monsterSubTab === tab.id && styles.masterSubTabIconActive
+                ]}>
+                  {tab.icon}
+                </Text>
+                <Text style={[
+                  styles.masterSubTabText,
+                  monsterSubTab === tab.id && styles.masterSubTabTextActive
+                ]}>
+                  {tab.label}
+                  {tab.comingSoon && ' (Yakında)'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Raporlama Sistemi alt sekmeleri - Raporlama Sistemi seçiliyse göster */}
+      {(activeSubTab === 'report' || activeSubTab === 'faq') && (
+        <View style={styles.masterSubTabContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.masterSubTabContent}
+          >
+            {reportSubTabs.map((tab) => (
+              <TouchableOpacity 
+                key={tab.id}
+                style={[
+                  styles.masterSubTabButton,
+                  reportSubTab === tab.id && styles.masterSubTabButtonActive
+                ]}
+                onPress={() => {
+                  setReportSubTab(tab.id);
+                  setActiveSubTab(tab.id);
+                }}
+              >
+                <Text style={[
+                  styles.masterSubTabIcon,
+                  reportSubTab === tab.id && styles.masterSubTabIconActive
+                ]}>
+                  {tab.icon}
+                </Text>
+                <Text style={[
+                  styles.masterSubTabText,
+                  reportSubTab === tab.id && styles.masterSubTabTextActive
+                ]}>
+                  {tab.label}
+                  {tab.comingSoon && ' (Yakında)'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Karakter alt sekmeleri - Karakter seçiliyse göster */}
+      {(activeSubTab === 'karakter' || activeSubTab === 'charDiz' || activeSubTab === 'skillHesaplama' || activeSubTab === 'basitAtakHesaplama') && (
+        <View style={styles.masterSubTabContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.masterSubTabContent}
+          >
+            {karakterSubTabs.map((tab) => {
+              const currentSubTab = activeSubTab === 'karakter' ? karakterSubTab : activeSubTab;
+              return (
+                <TouchableOpacity 
+                  key={tab.id}
+                  style={[
+                    styles.masterSubTabButton,
+                    currentSubTab === tab.id && styles.masterSubTabButtonActive
+                  ]}
+                  onPress={() => {
+                    setKarakterSubTab(tab.id);
+                    setActiveSubTab(tab.id);
+                  }}
+                >
+                  <Text style={[
+                    styles.masterSubTabIcon,
+                    currentSubTab === tab.id && styles.masterSubTabIconActive
+                  ]}>
+                    {tab.icon}
+                  </Text>
+                  <Text style={[
+                    styles.masterSubTabText,
+                    currentSubTab === tab.id && styles.masterSubTabTextActive
+                  ]}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
       )}
@@ -6209,8 +6745,8 @@ function MainApp() {
 
   const [splashVisible, setSplashVisible] = useState(true);
   const [activeTab, setActiveTab] = useState('anasayfa');
-  const [activeMerchantSubTab, setActiveMerchantSubTab] = useState('pazar');
-  const [activeKarakterSubTab, setActiveKarakterSubTab] = useState('basitAtakHesaplama');
+  const [activeMerchantSubTab, setActiveMerchantSubTab] = useState('goldbar');
+  const [activePazarTaksiSubTab, setActivePazarTaksiSubTab] = useState('zero');
   const [activeRehberSubTab, setActiveRehberSubTab] = useState(null); // Başlangıçta null - hoş geldin mesajı göster
   const [settingsVisible, setSettingsVisible] = useState(false);
 
@@ -6228,6 +6764,9 @@ function MainApp() {
           // Eğer 1 saatlik modda ve süre dolmuşsa, durumu temizle
           if (state.mode === '1hour' && elapsed >= 3600) {
             await AsyncStorage.removeItem('farmState');
+            // Farm sekmesine yönlendir (modal FarmGeliriScreen'de açılacak)
+            setActiveTab('rehber');
+            setActiveRehberSubTab('farm');
             return;
           }
           
@@ -6241,6 +6780,15 @@ function MainApp() {
     };
     
     checkFarmState();
+    
+    // Uygulama foreground'a geldiğinde de kontrol et
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        checkFarmState();
+      }
+    });
+    
+    return () => subscription?.remove();
   }, []);
 
   // ✅ ÖNEMLİ: Tüm hook'lar early return'lerden ÖNCE olmalı (React Hooks kuralları)
@@ -6250,7 +6798,7 @@ function MainApp() {
     { id: 'alarm', icon: '⏰', label: 'Alarm' },
     { id: 'guncellemeNotlari', icon: '📝', label: 'Güncelleme Notları' },
     { id: 'merchant', icon: '💰', label: 'Merchant' },
-    { id: 'karakter', icon: '👤', label: 'Karakter' },
+    { id: 'pazarTaksi', icon: '🚕', label: 'Pazar-Taksi' },
     { id: 'rehber', icon: '📚', label: 'Rehber' },
   ], []); // Sadece bir kez oluştur
 
@@ -6345,10 +6893,10 @@ function MainApp() {
           activeSubTab={activeMerchantSubTab} 
           setActiveSubTab={setActiveMerchantSubTab} 
         />;
-      case 'karakter':
-        return <KarakterScreen 
-          activeSubTab={activeKarakterSubTab} 
-          setActiveSubTab={setActiveKarakterSubTab} 
+      case 'pazarTaksi':
+        return <PazarTaksiScreen 
+          activeSubTab={activePazarTaksiSubTab} 
+          setActiveSubTab={setActivePazarTaksiSubTab} 
         />;
       case 'rehber':
         return <RehberScreen 
@@ -6652,6 +7200,15 @@ const styles = StyleSheet.create({
   },
   enhancedSubTabIconActive: {
     color: '#0B0B0B',
+  },
+  enhancedSubTabImage: {
+    width: 16,
+    height: 16,
+    marginRight: 6,
+    opacity: 0.7,
+  },
+  enhancedSubTabImageActive: {
+    opacity: 1,
   },
   enhancedSubTabText: {
     color: '#8E97A8',
@@ -7733,6 +8290,12 @@ const styles = StyleSheet.create({
   menuItemTextActive: {
     color: '#FFD66B',
     fontWeight: 'bold',
+  },
+  menuItemComingSoon: {
+    opacity: 0.7,
+  },
+  menuItemTextComingSoon: {
+    fontStyle: 'italic',
   },
   subMenuContainer: {
     backgroundColor: '#0B0B0B',

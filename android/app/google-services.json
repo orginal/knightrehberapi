@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "16418022198",
+    "project_id": "knightrehber-c880d",
+    "storage_bucket": "knightrehber-c880d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:16418022198:android:04c7b6f5e7570619744997",
+        "android_client_info": {
+          "package_name": "com.knightrehber.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBPcy96d8AbPm24Hp6WpOPL4rI9u8aPOLw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

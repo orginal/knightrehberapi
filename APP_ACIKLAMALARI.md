@@ -2,12 +2,12 @@
 
 ## 📱 Google Play Store
 
-### Kısa Açıklama (80 karakter max)
+
 ```
 Knight Online için kapsamlı rehber: etkinlikler, merchant, skill hesaplama
 ```
 
-### Uzun Açıklama (4000 karakter max)
+
 
 **Türkçe:**
 
@@ -182,7 +182,40 @@ Knight Online için kapsamlı rehber: etkinlikler, merchant fiyatları, skill he
 
 ### Description
 
-**Türkçe:**
+**Türkçe (Emojisiz - App Store Compatible):**
+
+```
+Knight Rehber - Knight Online Icin Kapsamli Rehber
+
+Knight Online oyunculari icin ozel olarak tasarlanmis profesyonel bir rehber uygulamasi. Tum ihtiyaciniz olan bilgiler tek bir yerde!
+
+OZELLIKLER:
+
+ETKINLIK TAKVIMI
+Haftalik ve gunluk tum etkinlikleri takip edin. Onemli etkinlikler icin alarm kurun ve hicbir seyi kacirmayin.
+
+MERCHANT VE GOLDBAR
+Guncel merchant fiyatlarini ve goldbar fiyatlarini goruntuleyin. En uygun fiyatlari bulun.
+
+HESAPLAMA ARACLARI
+Basit atak, skill hesaplama ve char diz araclari ile karakterinizi optimize edin.
+
+REHBER ICERIKLERI
+Monster lokasyonlari, quest gorevleri, item aciklamalari ve oyun ici ipuclari.
+
+GUNCELLEMELER
+Uygulama guncellemeleri ve onemli duyurular icin push bildirimleri alin.
+
+KOLAY KULLANIM
+Modern ve sezgisel arayuz ile hizlica istediginiz bilgiye ulasin.
+
+GUVENLIK
+Kullanici verileriniz guvenli sekilde saklanir. Detayli gizlilik politikamizi inceleyebilirsiniz.
+
+Bu uygulama Knight Onlinenin resmi uygulamasi degildir. Tum oyun haklari ilgili yayincilara aittir.
+```
+
+**Türkçe (Emoji ile - Alternatif):**
 
 ```
 🏰 Knight Rehber - Knight Online İçin Kapsamlı Rehber
@@ -286,4 +319,6 @@ https://github.com/yourusername/knightrehber
 - Event Tracker
 - Merchant Prices
 - Skill Calculator
+
+
 

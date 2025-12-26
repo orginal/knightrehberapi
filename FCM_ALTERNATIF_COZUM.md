@@ -63,3 +63,7 @@ Eğer Legacy API etkinleştirilemezse, Expo'nun otomatik credentials yönetimini
 
 Önce **Çözüm 2 - Yöntem A**'yı deneyin (Google Cloud Console'dan "Enable APIs" butonu ile). Bu en kolay yol.
 
+
+
+
+

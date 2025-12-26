@@ -1,6 +1,6 @@
 # Privacy Policy (Gizlilik Politikası)
 
-**Son Güncelleme:** 22 Aralık 2024
+**Son Güncelleme:** 22 Aralık 2025
 
 Knight Rehber uygulaması ("biz", "bizim" veya "uygulamamız") olarak, kullanıcılarımızın gizliliğini korumak bizim için önemlidir. Bu Gizlilik Politikası, Knight Rehber uygulamasını kullanırken toplanan bilgileri ve bu bilgilerin nasıl kullanıldığını açıklar.
 
@@ -82,7 +82,7 @@ Gizlilik politikamız hakkında sorularınız için bizimle iletişime geçebili
 
 ## Privacy Policy (English)
 
-**Last Updated:** December 22, 2024
+**Last Updated:** December 22, 2025
 
 At Knight Rehber application ("we", "us", or "our app"), we value your privacy. This Privacy Policy explains what information we collect when you use the Knight Rehber application and how we use it.
 

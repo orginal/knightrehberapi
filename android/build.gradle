@@ -1,0 +1,36 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    // Kotlin Gradle plugin version must match android.kotlinVersion in gradle.properties
+    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${findProperty('android.kotlinVersion') ?: '2.0.21'}")
+    // Google Services plugin for Firebase
+    classpath('com.google.gms:google-services:4.4.2')
+  }
+}
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}
+
+apply plugin: "expo-root-project"
+apply plugin: "com.facebook.react.rootproject"
+
+// SDK versiyonlarını tanımla (gradle.properties'dan oku)
+ext {
+    minSdkVersion = findProperty('android.minSdkVersion')?.toInteger() ?: 24
+    targetSdkVersion = findProperty('android.targetSdkVersion')?.toInteger() ?: 35
+    compileSdkVersion = findProperty('android.compileSdkVersion')?.toInteger() ?: 35
+    buildToolsVersion = findProperty('android.buildToolsVersion') ?: '35.0.0'
+    ndkVersion = findProperty('android.ndkVersion') ?: '27.0.12077973'
+}

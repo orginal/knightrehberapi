@@ -20,11 +20,10 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
-          "fetch",
-          "processing",
           "remote-notification"
         ]
-      }
+      },
+      "buildNumber": "8"
     },
     "android": {
       "adaptiveIcon": {
@@ -32,7 +31,7 @@
         "backgroundColor": "#07070C"
       },
       "package": "com.knightrehber.app",
-      "versionCode": 2,
+      "versionCode": 9,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "VIBRATE",
@@ -59,9 +58,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "01db3b91-a023-4742-a675-e40753963569"
+        "projectId": "4152972d-a40c-4032-bedc-0030177d2f33"
       }
     },
-    "owner": "ceylan26"
+    "owner": "kartkedi"
   }
 }
