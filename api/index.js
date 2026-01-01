@@ -317,8 +317,8 @@ app.post('/api/admin/login', (req, res) => {
 
 // Admin credentials - Environment variables kullan (güvenlik için)
 // ⚠️ Vercel'de ADMIN_USER ve ADMIN_PASS environment variable'larını ayarlayın!
-const ADMIN_USER = process.env.ADMIN_USER || 'aga';
-const ADMIN_PASS = process.env.ADMIN_PASS || 'aga251643';
+const ADMIN_USER = process.env.ADMIN_USER ||;
+const ADMIN_PASS = process.env.ADMIN_PASS ||;
 
 if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
   console.warn('⚠️ ADMIN_USER ve ADMIN_PASS environment variable\'ları ayarlanmalı!');
