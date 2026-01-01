@@ -70,6 +70,56 @@ async function connectToMongoDB() {
     const dbName = MONGODB_URI.split('/').pop().split('?')[0] || 'knightrehber';
     db = mongoClient.db(dbName);
     
+    // ✅ GÜNCELLEME NOTLARI İÇİN AYRI COLLECTION OLUŞTURMA - ÖNEMLİ!
+    try {
+      const collections = await db.listCollections({ name: 'guncelleme_notlari' }).toArray();
+      if (collections.length === 0) {
+        console.log('📦 guncelleme_notlari collection yok, oluşturuluyor...');
+        try {
+          await db.createCollection('guncelleme_notlari');
+          console.log('✅ Collection oluşturuldu: guncelleme_notlari');
+        } catch (createError) {
+          console.log('ℹ️ Collection oluşturma hatası (normal olabilir):', createError.message);
+        }
+      } else {
+        console.log('✅ Collection mevcut: guncelleme_notlari');
+      }
+    } catch (collectionError) {
+      console.log('ℹ️ Collection kontrolü hatası (normal olabilir):', collectionError.message);
+    }
+    
+    // ✅ TTL Index kontrolü ve kaldırma - guncelleme_notlari collection'ı için
+    try {
+      const updatesCollection = db.collection('guncelleme_notlari');
+      const indexes = await updatesCollection.indexes();
+      
+      let ttlIndexFound = false;
+      for (const index of indexes) {
+        if (index.expireAfterSeconds !== undefined && index.expireAfterSeconds !== null) {
+          ttlIndexFound = true;
+          console.log('⚠️⚠️⚠️ TTL INDEX BULUNDU:', index.name);
+          try {
+            await updatesCollection.dropIndex(index.name);
+            console.log('✅ TTL index kaldırıldı:', index.name);
+          } catch (dropError) {
+            console.error('❌ TTL index kaldırma hatası:', dropError.message);
+            try {
+              await updatesCollection.dropIndexes();
+              console.log('✅ Tüm index\'ler kaldırıldı');
+            } catch (dropAllError) {
+              console.error('❌ Tüm index\'leri kaldırma hatası:', dropAllError.message);
+            }
+          }
+        }
+      }
+      
+      if (!ttlIndexFound) {
+        console.log('✅ TTL index bulunamadı, güncelleme notları silinmeyecek');
+      }
+    } catch (ttlError) {
+      console.log('ℹ️ TTL index kontrolü hatası (normal olabilir):', ttlError.message);
+    }
+    
     console.log('✅ MongoDB bağlantısı başarılı, database:', dbName);
     return true;
   } catch (error) {
@@ -542,31 +592,102 @@ app.post('/api/admin/send-notification', async (req, res) => {
   }
 });
 
-// Güncelleme notu ekle (Fallback)
-app.post('/api/admin/add-update', (req, res) => {
+// Güncelleme notu ekle
+app.post('/api/admin/add-update', async (req, res) => {
   try {
-    const { title, content, importance } = req.body;
-
+    const { title, content, importance, imageUrl } = req.body || {};
+    
     if (!title || !content) {
       return res.status(400).json({ success: false, error: 'Başlık ve içerik gerekli' });
     }
-
+    
+    // MongoDB bağlantısı
+    const isMongoConnected = await connectToMongoDB();
+    
+    if (!isMongoConnected || !db) {
+      console.error('❌ MongoDB bağlantısı yok!');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'MongoDB bağlantısı yok. Güncelleme kaydedilemedi.' 
+      });
+    }
+    
+    // ✅ GÜNCELLEME NOTLARI İÇİN AYRI COLLECTION OLUŞTURMA - ÖNEMLİ!
+    try {
+      const collections = await db.listCollections({ name: 'guncelleme_notlari' }).toArray();
+      if (collections.length === 0) {
+        console.log('📦 guncelleme_notlari collection yok, oluşturuluyor...');
+        try {
+          await db.createCollection('guncelleme_notlari');
+          console.log('✅ Collection oluşturuldu: guncelleme_notlari');
+        } catch (createError) {
+          console.log('ℹ️ Collection oluşturma hatası (normal olabilir):', createError.message);
+        }
+      } else {
+        console.log('✅ Collection mevcut: guncelleme_notlari');
+      }
+    } catch (collectionError) {
+      console.error('Collection kontrolü hatası:', collectionError.message);
+    }
+    
+    // ✅ TTL INDEX KONTROLÜ VE KALDIRMA
+    try {
+      const updatesCollection = db.collection('guncelleme_notlari');
+      const indexes = await updatesCollection.indexes();
+      for (const index of indexes) {
+        if (index.expireAfterSeconds !== undefined && index.expireAfterSeconds !== null) {
+          console.log('⚠️⚠️⚠️ TTL INDEX BULUNDU, KALDIRILIYOR:', index.name);
+          try {
+            await updatesCollection.dropIndex(index.name);
+            console.log('✅ TTL index kaldırıldı');
+          } catch (dropError) {
+            console.error('❌ TTL index kaldırma hatası:', dropError.message);
+            try {
+              await updatesCollection.dropIndexes();
+              console.log('✅ Tüm index\'ler kaldırıldı');
+            } catch (e) {
+              console.error('❌ Tüm index\'leri kaldırma hatası:', e.message);
+            }
+          }
+        }
+      }
+    } catch (indexError) {
+      console.error('Index kontrolü hatası:', indexError.message);
+    }
+    
+    // Güncelleme objesi
     const newUpdate = {
       id: Date.now(),
-      title: title.trim(),
-      content: content.trim(),
+      title: String(title).trim(),
+      content: String(content).trim(),
       importance: importance || 'normal',
+      imageUrl: imageUrl ? String(imageUrl).trim() : null,
       date: new Date().toLocaleDateString('tr-TR'),
-      created_at: new Date().toISOString()
+      active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
-
-    database.updateNotes.unshift(newUpdate);
-
-    res.json({
-      success: true,
-      message: 'Güncelleme notu başarıyla eklendi!',
-      update: newUpdate
-    });
+    
+    // MongoDB'ye kaydet - AYRI COLLECTION'A
+    try {
+      const updatesCollection = db.collection('guncelleme_notlari');
+      await updatesCollection.insertOne(newUpdate);
+      console.log('✅ Güncelleme MongoDB\'ye kaydedildi:', newUpdate.title, 'ID:', newUpdate.id);
+      console.log('✅ Collection: guncelleme_notlari');
+      
+      // Başarılı olduysa response döndür
+      return res.json({
+        success: true,
+        message: 'Güncelleme notu başarıyla eklendi!',
+        update: newUpdate
+      });
+    } catch (error) {
+      console.error('❌ MongoDB güncelleme kayıt hatası:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Güncelleme kaydedilemedi: ' + error.message 
+      });
+    }
   } catch (error) {
     console.error('Güncelleme ekleme hatası:', error);
     res.status(500).json({ success: false, error: 'Güncelleme notu eklenirken hata oluştu' });
@@ -616,17 +737,61 @@ app.get('/api/admin/notifications', (req, res) => {
   res.json(database.notifications.slice(0, 20));
 });
 
-// Güncelleme notlarını listele (Fallback)
-app.get('/api/admin/updates', (req, res) => {
-  res.json(database.updateNotes.slice(0, 20));
+// Güncelleme notlarını listele
+app.get('/api/admin/updates', async (req, res) => {
+  try {
+    // MongoDB'den al - guncelleme_notlari collection'ından
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const updatesCollection = db.collection('guncelleme_notlari');
+        const updates = await updatesCollection
+          .find({}) // ✅ Tüm güncelleme notlarını al
+          .sort({ createdAt: -1 }) // En yeni önce
+          .limit(20)
+          .toArray();
+        
+        if (updates && updates.length > 0) {
+          return res.json(updates);
+        }
+      } catch (error) {
+        console.error('MongoDB güncelleme okuma hatası:', error);
+      }
+    }
+    
+    // Fallback: Memory database
+    res.json(database.updateNotes.slice(0, 20));
+  } catch (error) {
+    console.error('Güncelleme listesi hatası:', error);
+    res.json(database.updateNotes.slice(0, 20)); // Fallback
+  }
 });
 
-// Güncelleme notu sil (Fallback)
-app.delete('/api/admin/delete-update/:id', (req, res) => {
+// Güncelleme notu sil
+app.delete('/api/admin/delete-update/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const updateId = parseInt(id);
-
+    
+    // MongoDB'den sil - guncelleme_notlari collection'ından
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const updatesCollection = db.collection('guncelleme_notlari');
+        const result = await updatesCollection.deleteOne({ id: updateId });
+        if (result.deletedCount > 0) {
+          console.log('✅ Güncelleme MongoDB\'den silindi:', updateId);
+          return res.json({
+            success: true,
+            message: 'Güncelleme notu başarıyla silindi'
+          });
+        }
+      } catch (error) {
+        console.error('MongoDB güncelleme silme hatası:', error);
+      }
+    }
+    
+    // Fallback: Memory database
     const index = database.updateNotes.findIndex(note => note.id === updateId);
     if (index === -1) {
       return res.status(404).json({ success: false, error: 'Güncelleme notu bulunamadı' });
@@ -658,8 +823,33 @@ app.get('/api/app-status', (req, res) => {
   });
 });
 
-app.get('/api/guncelleme-notlari', (req, res) => {
-  res.json(database.updateNotes.slice(0, 10));
+app.get('/api/guncelleme-notlari', async (req, res) => {
+  try {
+    // MongoDB'den al - guncelleme_notlari collection'ından
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      try {
+        const updatesCollection = db.collection('guncelleme_notlari');
+        const updates = await updatesCollection
+          .find({}) // ✅ Tüm güncelleme notlarını al
+          .sort({ createdAt: -1 }) // En yeni önce
+          .limit(10)
+          .toArray();
+        
+        if (updates && updates.length > 0) {
+          return res.json(updates);
+        }
+      } catch (error) {
+        console.error('MongoDB güncelleme okuma hatası:', error);
+      }
+    }
+    
+    // Fallback: Memory database
+    res.json(database.updateNotes.slice(0, 10));
+  } catch (error) {
+    console.error('Güncelleme notları hatası:', error);
+    res.json(database.updateNotes.slice(0, 10)); // Fallback
+  }
 });
 
 app.get('/api/nostalji-fotograflar', (req, res) => {
