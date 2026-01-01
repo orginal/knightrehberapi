@@ -315,14 +315,22 @@ app.get('/admin', (req, res) => {
 app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body || {};
 
-// Admin credentials - Environment variables kullan (güvenlik için)
-// ⚠️ Vercel'de ADMIN_USER ve ADMIN_PASS environment variable'larını ayarlayın!
-const ADMIN_USER = process.env.ADMIN_USER ||;
-const ADMIN_PASS = process.env.ADMIN_PASS ||;
 
-if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
-  console.warn('⚠️ ADMIN_USER ve ADMIN_PASS environment variable\'ları ayarlanmalı!');
-  console.warn('⚠️ Vercel Dashboard > Settings > Environment Variables');
+// Admin credentials - Environment variables kullan (güvenlik için)
+// ⚠️ LOCAL: .env.local dosyasında tanımlayın
+// ⚠️ PRODUCTION: Vercel'de Environment Variables ayarlayın
+const ADMIN_USER = process.env.ADMIN_USER;
+const ADMIN_PASS = process.env.ADMIN_PASS;
+
+// Environment variable'lar kontrolü - CRITICAL!
+if (!ADMIN_USER || !ADMIN_PASS) {
+  console.error('❌ HATA: ADMIN_USER ve ADMIN_PASS environment variable\'ları ayarlanmalı!');
+  console.error('❌ LOCAL GELİŞTİRME: Proje kökünde .env.local dosyası oluşturun');
+  console.error('❌ PRODUCTION: Vercel Dashboard > Settings > Environment Variables');
+  console.error('❌ Uygulama çalışmayacak! Lütfen bu değişkenleri ayarlayın.');
+  
+  // Uygulamanın çalışmaya devam etmemesi için hata fırlat
+  throw new Error('Admin credentials not configured. Check environment variables.');
 }
 
   if (String(username).trim().toLowerCase() === adminUsername.toLowerCase() && String(password).trim() === adminPassword) {
