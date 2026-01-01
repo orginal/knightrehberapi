@@ -38,9 +38,22 @@ let userTokens = []; // Fallback için (MongoDB bağlantısı yoksa)
 // Reklam Banner'ları - position: 'home', 'merchant', 'goldbar', 'karakter', 'skill', 'chardiz'
 let reklamBannerlar = [];
 
-const ADMIN_USER = 'aga';
-const ADMIN_PASS = 'aga251643';
+// Admin credentials - Environment variables kullan (güvenlik için)
+// ⚠️ LOCAL: .env.local dosyasında tanımlayın
+// ⚠️ PRODUCTION: Vercel'de Environment Variables ayarlayın
+const ADMIN_USER = process.env.ADMIN_USER;
+const ADMIN_PASS = process.env.ADMIN_PASS;
 
+// Environment variable'lar kontrolü - CRITICAL!
+if (!ADMIN_USER || !ADMIN_PASS) {
+  console.error('❌ HATA: ADMIN_USER ve ADMIN_PASS environment variable\'ları ayarlanmalı!');
+  console.error('❌ LOCAL GELİŞTİRME: Proje kökünde .env.local dosyası oluşturun');
+  console.error('❌ PRODUCTION: Vercel Dashboard > Settings > Environment Variables');
+  console.error('❌ Uygulama çalışmayacak! Lütfen bu değişkenleri ayarlayın.');
+  
+  // Uygulamanın çalışmaya devam etmemesi için hata fırlat
+  throw new Error('Admin credentials not configured. Check environment variables.');
+}
 // MongoDB bağlantısı
 const MONGODB_URI = process.env.MONGODB_URI || '';
 let mongoClient = null;
