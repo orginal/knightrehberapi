@@ -315,8 +315,15 @@ app.get('/admin', (req, res) => {
 app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body || {};
 
-  const adminUsername = 'aga';
-  const adminPassword = 'aga251643';
+// Admin credentials - Environment variables kullan (güvenlik için)
+// ⚠️ Vercel'de ADMIN_USER ve ADMIN_PASS environment variable'larını ayarlayın!
+const ADMIN_USER = process.env.ADMIN_USER || 'aga';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'aga251643';
+
+if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
+  console.warn('⚠️ ADMIN_USER ve ADMIN_PASS environment variable\'ları ayarlanmalı!');
+  console.warn('⚠️ Vercel Dashboard > Settings > Environment Variables');
+}
 
   if (String(username).trim().toLowerCase() === adminUsername.toLowerCase() && String(password).trim() === adminPassword) {
     res.json({
