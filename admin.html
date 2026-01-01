@@ -215,27 +215,6 @@
 
         <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Mevcut Banner'lar</h3>
         <div id="bannerList"></div>
-
-        <hr style="border: 1px solid #4A5568; margin: 40px 0;">
-
-        <h2 style="color: #FFD66B; margin: 30px 0 20px 0;">📝 Güncelleme Notları</h2>
-        <p style="color: #8E97A8; margin-bottom: 20px; font-size: 14px;">
-            Güncelleme notlarını buradan ekleyebilirsiniz. Mobil uygulamada güncelleme notları gösterilir.
-        </p>
-        
-        <div id="updateAlert" class="alert"></div>
-
-        <input type="text" id="updateTitle" placeholder="Başlık">
-        <textarea id="updateContent" placeholder="İçerik"></textarea>
-        <input type="url" id="updateImageUrl" placeholder="📷 Resim URL'si (isteğe bağlı)">
-        <select id="updateImportance">
-            <option value="normal">Normal</option>
-            <option value="yuksek">Yüksek Önem</option>
-        </select>
-        <button onclick="guncellemeEkle()">➕ Güncelleme Ekle</button>
-
-        <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Mevcut Güncellemeler</h3>
-        <div id="updateList"></div>
         </div>
 
         <!-- PAZAR-TAKSİ BANNER YÖNETİMİ -->
@@ -474,7 +453,6 @@
                     document.getElementById('updateContent').value = '';
                     document.getElementById('updateImageUrl').value = '';
                     guncellemeleriYukle();
-                    bannerlariYukle();
                 } else {
                     gosterAlert('updateAlert', '❌ ' + (data.error || 'Hata!'), 'error');
                 }
