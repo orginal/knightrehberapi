@@ -38,8 +38,15 @@ let userTokens = []; // Fallback için (MongoDB bağlantısı yoksa)
 // Reklam Banner'ları - position: 'home', 'merchant', 'goldbar', 'karakter', 'skill', 'chardiz'
 let reklamBannerlar = [];
 
-const ADMIN_USER = 'aga';
-const ADMIN_PASS = 'aga251643';
+// Admin credentials - Environment variables kullan (güvenlik için)
+// ⚠️ Vercel'de ADMIN_USER ve ADMIN_PASS environment variable'larını ayarlayın!
+const ADMIN_USER = process.env.ADMIN_USER || 'aga';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'aga251643';
+
+if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
+  console.warn('⚠️ ADMIN_USER ve ADMIN_PASS environment variable\'ları ayarlanmalı!');
+  console.warn('⚠️ Vercel Dashboard > Settings > Environment Variables');
+}
 
 // MongoDB bağlantısı
 const MONGODB_URI = process.env.MONGODB_URI || '';
