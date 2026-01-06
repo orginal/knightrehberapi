@@ -15,9 +15,39 @@ if (typeof globalThis.fetch !== 'undefined') {
 
 const app = express();
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Middleware - iPhone 14+ için optimize edilmiş CORS ve timeout ayarları
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'User-Agent', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'Content-Type'],
+  credentials: false,
+  maxAge: 86400, // 24 saat preflight cache
+  optionsSuccessStatus: 200 // iPhone 14+ için önemli
+}));
+
+// Request timeout ayarları - iPhone 14+ için daha uzun timeout
+app.use((req, res, next) => {
+  // Request timeout'u 30 saniyeye çıkar (iPhone 14+ network stack için)
+  req.setTimeout(30000);
+  res.setTimeout(30000);
+  
+  // iPhone 14+ için özel header'lar
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Keep-Alive', 'timeout=30, max=1000');
+  
+  // PAC (Proxy Auto-Configuration) desteği için
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  
+  next();
+});
+
+app.use(express.json({ limit: '10mb' })); // Request body limit artırıldı
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '..')));
 
 // MongoDB bağlantısı
@@ -58,9 +88,12 @@ async function connectToMongoDB() {
     console.log('🔄 MONGODB_URI uzunluğu:', MONGODB_URI.length);
     
     mongoClient = new MongoClient(MONGODB_URI, {
-      serverSelectionTimeoutMS: 15000, // 15 saniye timeout (Vercel için daha uzun)
-      connectTimeoutMS: 15000,
-      socketTimeoutMS: 15000,
+      serverSelectionTimeoutMS: 30000, // 30 saniye timeout (iPhone 14+ network stack için)
+      connectTimeoutMS: 30000,
+      socketTimeoutMS: 30000,
+      maxPoolSize: 10, // Connection pool size artırıldı
+      minPoolSize: 1,
+      maxIdleTimeMS: 30000,
       maxPoolSize: 1, // Serverless için 1 yeterli
       minPoolSize: 0,
       maxIdleTimeMS: 30000
@@ -862,13 +895,30 @@ app.post('/api/stats', (req, res) => {
   res.json({ success: true });
 });
 
+// OPTIONS preflight handling - iPhone 14+ için önemli
+app.options('/api/push/register', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, User-Agent, X-Requested-With');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.setHeader('Connection', 'keep-alive');
+  res.status(200).end();
+});
+
 // Push token kaydet
 app.post('/api/push/register', async (req, res) => {
   try {
-    const { token, experienceId } = req.body || {};
+    const { token, experienceId, platform } = req.body || {};
+    
+    // iPhone 14+ için User-Agent loglama
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    const isIPhone14Plus = /iPhone.*1[4-9]|iPhone.*2[0-9]/.test(userAgent) || /iPhone.*OS.*1[6-9]/.test(userAgent);
     
     console.log('📱 Push token kayıt isteği geldi:', token ? 'Token var' : 'Token yok');
-    console.log('📱 Experience ID:', experienceId || 'Yok');
+    console.log('📱 Platform:', platform || 'Belirtilmemiş');
+    console.log('📱 Experience ID:', experienceId || 'Yok (iOS olabilir)');
+    console.log('📱 User-Agent:', userAgent);
+    console.log('📱 iPhone 14+ tespit edildi:', isIPhone14Plus);
     
     if (!token) {
       console.log('❌ Token gerekli');
@@ -877,10 +927,13 @@ app.post('/api/push/register', async (req, res) => {
 
     const tokenStr = String(token).trim();
     const expId = experienceId ? String(experienceId).trim() : null;
+    const platformStr = platform ? String(platform).trim().toLowerCase() : null;
+    
     console.log('📝 Token uzunluğu:', tokenStr.length);
     console.log('📝 Token formatı:', tokenStr.substring(0, 30) + '...');
     console.log('📝 Token başlangıcı:', tokenStr.startsWith('ExponentPushToken[') ? 'Doğru' : 'Hatalı');
-    console.log('📝 Experience ID:', expId || 'Belirtilmemiş');
+    console.log('📝 Platform:', platformStr || 'Belirtilmemiş');
+    console.log('📝 Experience ID:', expId || 'null (iOS veya belirtilmemiş)');
     
     // MongoDB'ye bağlanmayı dene
     const isMongoConnected = await connectToMongoDB();
@@ -921,6 +974,13 @@ app.post('/api/push/register', async (req, res) => {
         console.log('📊 Platform:', platformStr || 'Belirtilmemiş');
         console.log('📊 Experience ID:', expId || 'null');
         console.log('📊 Upsert sonucu - Matched:', result.matchedCount, 'Modified:', result.modifiedCount, 'Upserted:', result.upsertedCount);
+        
+        // iPhone 14+ için özel response header'ları
+        if (isIPhone14Plus) {
+          res.setHeader('X-iPhone14Plus', 'true');
+          res.setHeader('Connection', 'keep-alive');
+        }
+        
         res.json({ success: true, message: 'Token kaydedildi', totalTokens, platform: platformStr || 'unknown' });
         return;
       } catch (mongoError) {
