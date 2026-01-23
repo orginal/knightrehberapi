@@ -1270,7 +1270,34 @@ app.post('/api/admin/banner', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Position gerekli' });
     }
     
-    // Banner limiti kaldırıldı - sınırsız banner eklenebilir
+    // Aynı position için maksimum 5 banner kontrolü
+    const isMongoConnected = await connectToMongoDB();
+    let bannerCount = 0;
+    
+    if (isMongoConnected && db) {
+      try {
+        const bannersCollection = db.collection('reklam_bannerlar');
+        bannerCount = await bannersCollection.countDocuments({ position: String(position).trim() });
+        
+        if (bannerCount >= 10) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
+          });
+        }
+  } catch (error) {
+        console.error('MongoDB banner sayısı kontrolü hatası:', error);
+      }
+    } else {
+      // Fallback: Memory database
+      bannerCount = reklamBannerlar.filter(b => b.position === String(position).trim()).length;
+      if (bannerCount >= 10) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Bu position için maksimum 10 banner eklenebilir. Önce bir banner silin.' 
+        });
+      }
+    }
     
     // Imgur/ImageBB URL'ini düzelt
     const convertedImageUrl = imageUrl ? convertImageUrl(imageUrl) : null;
