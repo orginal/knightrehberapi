@@ -214,6 +214,9 @@ async function connectToMongoDB() {
 // Uygulama başlangıcında MongoDB'ye bağlan
 connectToMongoDB().catch(console.error);
 
+// Bu projeye ait experienceId - sadece bu token'lara bildirim gider (Expo aynı istekte farklı projelere izin vermez)
+const CURRENT_EXPERIENCE_ID = '@kartkedi/knight-rehber';
+
 // Expo Push Notification gönderme fonksiyonu
 // pushTokens: Array of {token: string, experienceId: string|null} veya string array
 async function sendExpoPushNotification(pushTokens, title, message, imageUrl = null) {
@@ -539,6 +542,57 @@ app.get('/api/admin/tokens', async (req, res) => {
   }
 });
 
+// Geçersiz token'ları temizle: experienceId null veya bu proje (@kartkedi/knight-rehber) değilse sil
+app.delete('/api/admin/push-tokens/clean-invalid', async (req, res) => {
+  try {
+    const isMongoConnected = await connectToMongoDB();
+    if (!isMongoConnected || !db) {
+      return res.status(500).json({ success: false, error: 'MongoDB bağlantısı yok' });
+    }
+    const tokensCollection = db.collection('push_tokens');
+    const result = await tokensCollection.deleteMany({
+      $or: [
+        { experienceId: null },
+        { experienceId: { $exists: false } },
+        { experienceId: { $nin: [CURRENT_EXPERIENCE_ID] } }
+      ]
+    });
+    console.log('🧹 Geçersiz token temizlendi:', result.deletedCount);
+    res.json({
+      success: true,
+      message: `${result.deletedCount} geçersiz token silindi. Sadece @kartkedi/knight-rehber token'ları kaldı.`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    console.error('❌ Geçersiz token temizleme hatası:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Tek bir token'ı sil (body: { token: "ExponentPushToken[...]" })
+app.delete('/api/admin/push-tokens/one', async (req, res) => {
+  try {
+    const tokenStr = (req.body?.token || req.query?.token || '').trim();
+    if (!tokenStr) {
+      return res.status(400).json({ success: false, error: 'token gerekli (body veya query)' });
+    }
+    const isMongoConnected = await connectToMongoDB();
+    if (!isMongoConnected || !db) {
+      return res.status(500).json({ success: false, error: 'MongoDB bağlantısı yok' });
+    }
+    const tokensCollection = db.collection('push_tokens');
+    const result = await tokensCollection.deleteOne({ token: tokenStr });
+    if (result.deletedCount === 0) {
+      return res.json({ success: true, message: 'Token bulunamadı (zaten silinmiş olabilir)', deletedCount: 0 });
+    }
+    console.log('🗑️ Token silindi:', tokenStr.substring(0, 30) + '...');
+    res.json({ success: true, message: 'Token silindi', deletedCount: 1 });
+  } catch (error) {
+    console.error('❌ Token silme hatası:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // OPTIONS preflight handling - iPhone 14+ için önemli
 app.options('/api/push/register', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -709,13 +763,18 @@ app.post('/api/admin/send-notification', async (req, res) => {
           console.log(`📱 ${expId}: ${tokensByExpId[expId].length} token`);
         });
         
-        // ✅ TÜM TOKEN'LARI experienceId ve platform ile birlikte al - Gruplama için
-        tokensToSend = allTokens.map(t => ({
+        // ✅ Sadece bu projeye (@kartkedi/knight-rehber) ait token'lara gönder - eski/başka proje token'ları atlanır (Expo 400 hatası önlenir)
+        const allMapped = allTokens.map(t => ({
           token: t.token,
           experienceId: t.experienceId || null,
           platform: t.platform || null
         })).filter(t => t.token && t.token.trim());
-        console.log('✅ MongoDB\'den toplam token sayısı (TÜM PLATFORMLAR):', tokensToSend.length);
+        tokensToSend = allMapped.filter(t => t.experienceId === CURRENT_EXPERIENCE_ID);
+        const skipped = allMapped.length - tokensToSend.length;
+        if (skipped > 0) {
+          console.log(`⚠️ ${skipped} token atlandı (experienceId !== ${CURRENT_EXPERIENCE_ID} veya null - bildirim sadece geçerli token\'lara gidecek)`);
+        }
+        console.log('✅ Gönderilecek token sayısı (@kartkedi/knight-rehber):', tokensToSend.length);
       } catch (error) {
         console.error('❌ MongoDB token okuma hatası:', error.message);
         mongoError = error.message;
@@ -1251,7 +1310,10 @@ function convertImageUrl(url) {
   const directMatch = trimmedUrl.match(/imgur\.com\/([a-zA-Z0-9]+)(\.[a-z]+)?$/);
   if (directMatch && !trimmedUrl.includes('/a/')) {
     const imageId = directMatch[1];
-    return `https://i.imgur.com/${imageId}.jpg`;
+    const ext = directMatch[2] || '';
+    // Uzantı yoksa .jpg'e zorlamayalım (Imgur bazen .png/.gif döndürüyor).
+    // i.imgur.com/<id> çoğu durumda doğru dosyaya yönlendirir.
+    return ext ? `https://i.imgur.com/${imageId}${ext}` : `https://i.imgur.com/${imageId}`;
   }
   
   // Zaten i.imgur.com formatındaysa olduğu gibi döndür
