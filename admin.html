@@ -211,6 +211,7 @@
             </p>
         </div>
         <input type="url" id="bannerClickUrl" placeholder="🔗 Tıklama Linki (isteğe bağlı)">
+        <input type="number" id="bannerOrder" placeholder="📌 Sıra (1 = en üstte, boş = sona)" min="1" style="margin-top: 10px;">
         <button onclick="bannerKaydet()">💾 Banner Kaydet</button>
 
         <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Mevcut Banner'lar</h3>
@@ -231,38 +232,56 @@
             <optgroup label="🌐 Zero">
                 <option value="pazar-taksi-zero-pazarcilar">🛒 Zero - Pazarcılar</option>
                 <option value="pazar-taksi-zero-taksi">🚕 Zero - Taksi Hizmeti</option>
+                <option value="pazar-taksi-zero-isillion">⚔️ Zero - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-zero-arena-legend">🏆 Zero - Arena Legend (9str)</option>
             </optgroup>
             <optgroup label="🏛️ Agartha">
                 <option value="pazar-taksi-agartha-pazarcilar">🛒 Agartha - Pazarcılar</option>
                 <option value="pazar-taksi-agartha-taksi">🚕 Agartha - Taksi Hizmeti</option>
+                <option value="pazar-taksi-agartha-isillion">⚔️ Agartha - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-agartha-arena-legend">🏆 Agartha - Arena Legend (9str)</option>
             </optgroup>
             <optgroup label="📦 Pandora">
                 <option value="pazar-taksi-pandora-pazarcilar">🛒 Pandora - Pazarcılar</option>
                 <option value="pazar-taksi-pandora-taksi">🚕 Pandora - Taksi Hizmeti</option>
+                <option value="pazar-taksi-pandora-isillion">⚔️ Pandora - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-pandora-arena-legend">🏆 Pandora - Arena Legend (9str)</option>
             </optgroup>
             <optgroup label="🐱 Felis">
                 <option value="pazar-taksi-felis-pazarcilar">🛒 Felis - Pazarcılar</option>
                 <option value="pazar-taksi-felis-taksi">🚕 Felis - Taksi Hizmeti</option>
+                <option value="pazar-taksi-felis-isillion">⚔️ Felis - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-felis-arena-legend">🏆 Felis - Arena Legend (9str)</option>
             </optgroup>
             <optgroup label="🌿 Dryads">
                 <option value="pazar-taksi-dryads-pazarcilar">🛒 Dryads - Pazarcılar</option>
                 <option value="pazar-taksi-dryads-taksi">🚕 Dryads - Taksi Hizmeti</option>
+                <option value="pazar-taksi-dryads-isillion">⚔️ Dryads - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-dryads-arena-legend">🏆 Dryads - Arena Legend (9str)</option>
             </optgroup>
             <optgroup label="⚔️ Destan">
                 <option value="pazar-taksi-destan-pazarcilar">🛒 Destan - Pazarcılar</option>
                 <option value="pazar-taksi-destan-taksi">🚕 Destan - Taksi Hizmeti</option>
+                <option value="pazar-taksi-destan-isillion">⚔️ Destan - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-destan-arena-legend">🏆 Destan - Arena Legend (9str)</option>
             </optgroup>
             <optgroup label="🏰 Minark">
                 <option value="pazar-taksi-minark-pazarcilar">🛒 Minark - Pazarcılar</option>
                 <option value="pazar-taksi-minark-taksi">🚕 Minark - Taksi Hizmeti</option>
+                <option value="pazar-taksi-minark-isillion">⚔️ Minark - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-minark-arena-legend">🏆 Minark - Arena Legend (9str)</option>
             </optgroup>
             <optgroup label="⛰️ Oreads">
                 <option value="pazar-taksi-oreads-pazarcilar">🛒 Oreads - Pazarcılar</option>
                 <option value="pazar-taksi-oreads-taksi">🚕 Oreads - Taksi Hizmeti</option>
+                <option value="pazar-taksi-oreads-isillion">⚔️ Oreads - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-oreads-arena-legend">🏆 Oreads - Arena Legend (9str)</option>
             </optgroup>
             <optgroup label="🎮 Zion(steamko)">
                 <option value="pazar-taksi-zion-pazarcilar">🛒 Zion(steamko) - Pazarcılar</option>
                 <option value="pazar-taksi-zion-taksi">🚕 Zion(steamko) - Taksi Hizmeti</option>
+                <option value="pazar-taksi-zion-isillion">⚔️ Zion(steamko) - Isillion - Felankor Kesimi</option>
+                <option value="pazar-taksi-zion-arena-legend">🏆 Zion(steamko) - Arena Legend (9str)</option>
             </optgroup>
         </select>
         
@@ -284,6 +303,7 @@
             </p>
         </div>
         <input type="url" id="pazarTaksiClickUrl" placeholder="🔗 Tıklama Linki (isteğe bağlı)">
+        <input type="number" id="pazarTaksiOrder" placeholder="📌 Sıra (1 = en üstte, boş = sona)" min="1" style="margin-top: 10px;">
         <button onclick="pazarTaksiBannerKaydet()">💾 Banner Kaydet</button>
 
         <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Mevcut Pazar-Taksi Banner'ları</h3>
@@ -305,10 +325,6 @@
             <option value="free">🎯 Ücretsiz Kullanıcılar</option>
         </select>
         <button onclick="bildirimGonder()">📨 Bildirim Gönder</button>
-
-        <p style="color: #8E97A8; font-size: 13px; margin-top: 16px;">Bildirimler sadece <strong>@kartkedi/knight-rehber</strong> kayıtlı cihazlara gider. Eski veya başka projeye ait token'lar atlanır (hata oluşmaz).</p>
-        <p style="color: #8E97A8; font-size: 13px; margin-top: 8px;">Veritabanındaki eski/geçersiz token'ları silmek isterseniz:</p>
-        <button type="button" onclick="gecersizTokenlariTemizle()" class="btn-danger" style="margin-top: 8px;">🧹 Geçersiz token'ları temizle</button>
 
         <h3 style="color: #FFD66B; margin: 40px 0 20px 0;">Son Gönderilen Bildirimler</h3>
         <div id="notificationList"></div>
@@ -524,26 +540,6 @@
             }
         }
 
-        // Geçersiz token'ları temizle (experienceId null veya başka proje olanlar)
-        async function gecersizTokenlariTemizle() {
-            if (!confirm('ExperienceId\'si olmayan veya başka projeye (@ceylan26 vb.) ait tüm token\'lar silinecek. Sadece @kartkedi/knight-rehber token\'ları kalacak. Devam?')) return;
-            try {
-                const res = await fetch(API_URL + '/admin/push-tokens/clean-invalid', {
-                    method: 'DELETE',
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                const data = await res.json();
-                if (data.success) {
-                    gosterAlert('notificationAlert', '✅ ' + data.message, 'success');
-                    istatistikleriYukle();
-                } else {
-                    gosterAlert('notificationAlert', '❌ ' + (data.error || 'Hata!'), 'error');
-                }
-            } catch (err) {
-                gosterAlert('notificationAlert', '❌ Hata: ' + err.message, 'error');
-            }
-        }
-
         // Bildirimleri yükle
         async function bildirimleriYukle() {
             try {
@@ -589,10 +585,12 @@
             }
 
             try {
+                const orderVal = document.getElementById('bannerOrder').value.trim();
+                const order = orderVal ? parseInt(orderVal, 10) : undefined;
                 const res = await fetch(API_URL + '/admin/banner', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ position, imageUrl, clickUrl, active: true })
+                    body: JSON.stringify({ position, imageUrl, clickUrl, active: true, order })
                 });
 
                 const data = await res.json();
@@ -601,6 +599,7 @@
                     gosterAlert('bannerAlert', '✅ Banner kaydedildi!', 'success');
                     document.getElementById('bannerImageUrl').value = '';
                     document.getElementById('bannerClickUrl').value = '';
+                    document.getElementById('bannerOrder').value = '';
                     bannerlariYukle();
                 } else {
                     gosterAlert('bannerAlert', '❌ ' + (data.error || 'Hata!'), 'error');
@@ -661,11 +660,13 @@
                             <h4 style="color: #FFD66B; margin-bottom: 15px;">${positionNames[position] || position} (${banners.length}/${maxBanners})</h4>
                             ${banners.map(b => `
                                 <div class="update-item" style="margin-bottom: 15px;">
-                                    <div class="update-title">Banner #${b.id}</div>
+                                    <div class="update-title">Banner #${b.id} ${b.order != null ? `– Sıra: ${b.order}` : ''}</div>
                                     ${b.imageUrl ? `<img src="${escapeHtml(b.imageUrl)}" alt="Banner" style="max-width: 100%; margin: 10px 0; border-radius: 8px; max-height: 200px;" onerror="this.style.display='none'">` : ''}
                                     ${b.clickUrl ? `<div class="update-content">🔗 Link: <a href="${escapeHtml(b.clickUrl)}" target="_blank" style="color: #FFD66B;">${escapeHtml(b.clickUrl)}</a></div>` : ''}
                                     <div class="update-meta">
                                         <span>Durum: ${b.active ? '✅ Aktif' : '❌ Pasif'}</span>
+                                        <span>Sıra: <input type="number" id="order-${b.id}" value="${b.order != null ? b.order : 999}" min="1" style="width: 60px; padding: 4px; background: #2D3748; color: #FFD66B; border: 1px solid #475467; border-radius: 4px;"></span>
+                                        <button class="btn-danger" onclick="bannerSiraGuncelle(${b.id})">📌 Sırayı Güncelle</button>
                                         <span>${b.createdAt ? new Date(b.createdAt).toLocaleDateString('tr-TR') : ''}</span>
                                         <button class="btn-danger" onclick="bannerSil(${b.id})">🗑️ Sil</button>
                                     </div>
@@ -676,6 +677,34 @@
                 }).join('');
             } catch (err) {
                 console.error('Banner yükleme hatası:', err);
+            }
+        }
+
+        // Banner sırası güncelle
+        async function bannerSiraGuncelle(id) {
+            const orderInput = document.getElementById('order-' + id);
+            if (!orderInput) return;
+            const order = parseInt(orderInput.value, 10);
+            if (isNaN(order) || order < 1) {
+                gosterAlert('bannerAlert', '⚠️ Geçerli bir sıra numarası girin (1 veya daha büyük)', 'error');
+                return;
+            }
+            try {
+                const res = await fetch(API_URL + '/admin/banner/' + id, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ order })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    gosterAlert('bannerAlert', '✅ Sıralama güncellendi!', 'success');
+                    bannerlariYukle();
+                    pazarTaksiBannerlariYukle();
+                } else {
+                    gosterAlert('bannerAlert', '❌ ' + (data.error || 'Hata!'), 'error');
+                }
+            } catch (err) {
+                gosterAlert('bannerAlert', '❌ Hata: ' + err.message, 'error');
             }
         }
 
@@ -719,10 +748,12 @@
             }
 
             try {
+                const orderVal = document.getElementById('pazarTaksiOrder').value.trim();
+                const order = orderVal ? parseInt(orderVal, 10) : undefined;
                 const res = await fetch(API_URL + '/admin/banner', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ position, imageUrl, clickUrl, active: true })
+                    body: JSON.stringify({ position, imageUrl, clickUrl, active: true, order })
                 });
 
                 const data = await res.json();
@@ -731,6 +762,7 @@
                     gosterAlert('pazarTaksiAlert', '✅ Banner kaydedildi!', 'success');
                     document.getElementById('pazarTaksiImageUrl').value = '';
                     document.getElementById('pazarTaksiClickUrl').value = '';
+                    document.getElementById('pazarTaksiOrder').value = '';
                     pazarTaksiBannerlariYukle();
                 } else {
                     gosterAlert('pazarTaksiAlert', '❌ ' + (data.error || 'Hata!'), 'error');
@@ -768,22 +800,40 @@
                 const positionNames = {
                     'pazar-taksi-zero-pazarcilar': '🛒 Zero - Pazarcılar',
                     'pazar-taksi-zero-taksi': '🚕 Zero - Taksi Hizmeti',
+                    'pazar-taksi-zero-isillion': '⚔️ Zero - Isillion - Felankor Kesimi',
+                    'pazar-taksi-zero-arena-legend': '🏆 Zero - Arena Legend (9str)',
                     'pazar-taksi-agartha-pazarcilar': '🛒 Agartha - Pazarcılar',
                     'pazar-taksi-agartha-taksi': '🚕 Agartha - Taksi Hizmeti',
+                    'pazar-taksi-agartha-isillion': '⚔️ Agartha - Isillion - Felankor Kesimi',
+                    'pazar-taksi-agartha-arena-legend': '🏆 Agartha - Arena Legend (9str)',
                     'pazar-taksi-pandora-pazarcilar': '🛒 Pandora - Pazarcılar',
                     'pazar-taksi-pandora-taksi': '🚕 Pandora - Taksi Hizmeti',
+                    'pazar-taksi-pandora-isillion': '⚔️ Pandora - Isillion - Felankor Kesimi',
+                    'pazar-taksi-pandora-arena-legend': '🏆 Pandora - Arena Legend (9str)',
                     'pazar-taksi-felis-pazarcilar': '🛒 Felis - Pazarcılar',
                     'pazar-taksi-felis-taksi': '🚕 Felis - Taksi Hizmeti',
+                    'pazar-taksi-felis-isillion': '⚔️ Felis - Isillion - Felankor Kesimi',
+                    'pazar-taksi-felis-arena-legend': '🏆 Felis - Arena Legend (9str)',
                     'pazar-taksi-dryads-pazarcilar': '🛒 Dryads - Pazarcılar',
                     'pazar-taksi-dryads-taksi': '🚕 Dryads - Taksi Hizmeti',
+                    'pazar-taksi-dryads-isillion': '⚔️ Dryads - Isillion - Felankor Kesimi',
+                    'pazar-taksi-dryads-arena-legend': '🏆 Dryads - Arena Legend (9str)',
                     'pazar-taksi-destan-pazarcilar': '🛒 Destan - Pazarcılar',
                     'pazar-taksi-destan-taksi': '🚕 Destan - Taksi Hizmeti',
+                    'pazar-taksi-destan-isillion': '⚔️ Destan - Isillion - Felankor Kesimi',
+                    'pazar-taksi-destan-arena-legend': '🏆 Destan - Arena Legend (9str)',
                     'pazar-taksi-minark-pazarcilar': '🛒 Minark - Pazarcılar',
                     'pazar-taksi-minark-taksi': '🚕 Minark - Taksi Hizmeti',
+                    'pazar-taksi-minark-isillion': '⚔️ Minark - Isillion - Felankor Kesimi',
+                    'pazar-taksi-minark-arena-legend': '🏆 Minark - Arena Legend (9str)',
                     'pazar-taksi-oreads-pazarcilar': '🛒 Oreads - Pazarcılar',
                     'pazar-taksi-oreads-taksi': '🚕 Oreads - Taksi Hizmeti',
+                    'pazar-taksi-oreads-isillion': '⚔️ Oreads - Isillion - Felankor Kesimi',
+                    'pazar-taksi-oreads-arena-legend': '🏆 Oreads - Arena Legend (9str)',
                     'pazar-taksi-zion-pazarcilar': '🛒 Zion(steamko) - Pazarcılar',
-                    'pazar-taksi-zion-taksi': '🚕 Zion(steamko) - Taksi Hizmeti'
+                    'pazar-taksi-zion-taksi': '🚕 Zion(steamko) - Taksi Hizmeti',
+                    'pazar-taksi-zion-isillion': '⚔️ Zion(steamko) - Isillion - Felankor Kesimi',
+                    'pazar-taksi-zion-arena-legend': '🏆 Zion(steamko) - Arena Legend (9str)'
                 };
 
                 // Position'a göre grupla
@@ -803,11 +853,13 @@
                             <h4 style="color: #FFD66B; margin-bottom: 15px;">${positionNames[position] || position} (${banners.length}/${maxBanners})</h4>
                             ${banners.map(b => `
                                 <div class="update-item" style="margin-bottom: 15px;">
-                                    <div class="update-title">Banner #${b.id}</div>
+                                    <div class="update-title">Banner #${b.id} ${b.order != null ? `– Sıra: ${b.order}` : ''}</div>
                                     ${b.imageUrl ? `<img src="${escapeHtml(b.imageUrl)}" alt="Banner" style="max-width: 100%; margin: 10px 0; border-radius: 8px; max-height: 200px;" onerror="this.style.display='none'">` : ''}
                                     ${b.clickUrl ? `<div class="update-content">🔗 Link: <a href="${escapeHtml(b.clickUrl)}" target="_blank" style="color: #FFD66B;">${escapeHtml(b.clickUrl)}</a></div>` : ''}
                                     <div class="update-meta">
                                         <span>Durum: ${b.active ? '✅ Aktif' : '❌ Pasif'}</span>
+                                        <span>Sıra: <input type="number" id="order-${b.id}" value="${b.order != null ? b.order : 999}" min="1" style="width: 60px; padding: 4px; background: #2D3748; color: #FFD66B; border: 1px solid #475467; border-radius: 4px;"></span>
+                                        <button class="btn-danger" onclick="bannerSiraGuncelle(${b.id})">📌 Sırayı Güncelle</button>
                                         <span>${b.createdAt ? new Date(b.createdAt).toLocaleDateString('tr-TR') : ''}</span>
                                         <button class="btn-danger" onclick="pazarTaksiBannerSil(${b.id})">🗑️ Sil</button>
                                     </div>
