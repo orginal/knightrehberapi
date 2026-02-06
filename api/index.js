@@ -209,13 +209,12 @@ let database = {
   appSettings: {
     app_status: 'active',
     maintenance_message: 'Uygulama bakım modundadır.',
-    min_version: '1.0.0'
+    min_version: '1.2.1',
+    store_url_android: 'https://play.google.com/store/apps/details?id=com.knightrehber.app',
+    store_url_ios: 'https://apps.apple.com/tr/app/knight-rehber/id6756941925'
   },
   reklamBannerlar: []
 };
-
-// Bu projeye ait experienceId - sadece bu token'lara bildirim gider (Expo aynı istekte farklı projelere izin vermez)
-const CURRENT_EXPERIENCE_ID = '@kartkedi/knight-rehber';
 
 // Expo Push Notification gönderme fonksiyonu
 // pushTokens: Array of {token: string, experienceId: string|null} veya string array
@@ -419,11 +418,11 @@ if (!ADMIN_USER || !ADMIN_PASS) {
   throw new Error('Admin credentials not configured. Check environment variables.');
 }
 
-  if (String(username).trim().toLowerCase() === adminUsername.toLowerCase() && String(password).trim() === adminPassword) {
+  if (String(username).trim().toLowerCase() === ADMIN_USER.toLowerCase() && String(password).trim() === ADMIN_PASS) {
     res.json({
       success: true,
       token: 'admin-token-2024',
-      user: { username: adminUsername, role: 'admin' }
+      user: { username: ADMIN_USER, role: 'admin' }
     });
   } else {
     res.status(401).json({ error: 'Geçersiz kullanıcı adı veya şifre' });
@@ -513,57 +512,6 @@ app.get('/api/admin/tokens', async (req, res) => {
   }
 });
 
-// Geçersiz token'ları temizle: experienceId null veya bu proje (@kartkedi/knight-rehber) değilse sil
-app.delete('/api/admin/push-tokens/clean-invalid', async (req, res) => {
-  try {
-    const isMongoConnected = await connectToMongoDB();
-    if (!isMongoConnected || !db) {
-      return res.status(500).json({ success: false, error: 'MongoDB bağlantısı yok' });
-    }
-    const tokensCollection = db.collection('push_tokens');
-    const result = await tokensCollection.deleteMany({
-      $or: [
-        { experienceId: null },
-        { experienceId: { $exists: false } },
-        { experienceId: { $nin: [CURRENT_EXPERIENCE_ID] } }
-      ]
-    });
-    console.log('🧹 Geçersiz token temizlendi:', result.deletedCount);
-    res.json({
-      success: true,
-      message: `${result.deletedCount} geçersiz token silindi. Sadece @kartkedi/knight-rehber token'ları kaldı.`,
-      deletedCount: result.deletedCount
-    });
-  } catch (error) {
-    console.error('❌ Geçersiz token temizleme hatası:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Tek bir token'ı sil (body: { token: "ExponentPushToken[...]" })
-app.delete('/api/admin/push-tokens/one', async (req, res) => {
-  try {
-    const tokenStr = (req.body?.token || req.query?.token || '').trim();
-    if (!tokenStr) {
-      return res.status(400).json({ success: false, error: 'token gerekli (body veya query)' });
-    }
-    const isMongoConnected = await connectToMongoDB();
-    if (!isMongoConnected || !db) {
-      return res.status(500).json({ success: false, error: 'MongoDB bağlantısı yok' });
-    }
-    const tokensCollection = db.collection('push_tokens');
-    const result = await tokensCollection.deleteOne({ token: tokenStr });
-    if (result.deletedCount === 0) {
-      return res.json({ success: true, message: 'Token bulunamadı (zaten silinmiş olabilir)', deletedCount: 0 });
-    }
-    console.log('🗑️ Token silindi:', tokenStr.substring(0, 30) + '...');
-    res.json({ success: true, message: 'Token silindi', deletedCount: 1 });
-  } catch (error) {
-    console.error('❌ Token silme hatası:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // Bildirim gönder
 app.post('/api/admin/send-notification', async (req, res) => {
   try {
@@ -620,18 +568,13 @@ app.post('/api/admin/send-notification', async (req, res) => {
           console.log(`📱 ${expId}: ${tokensByExpId[expId].length} token`);
         });
         
-        // ✅ Sadece bu projeye (@kartkedi/knight-rehber) ait token'lara gönder - eski/başka proje token'ları atlanır (Expo 400 hatası önlenir)
-        const allMapped = allTokens.map(t => ({
+        // ✅ TÜM TOKEN'LARI experienceId ve platform ile birlikte al - Gruplama için
+        tokensToSend = allTokens.map(t => ({
           token: t.token,
           experienceId: t.experienceId || null,
           platform: t.platform || null
         })).filter(t => t.token && t.token.trim());
-        tokensToSend = allMapped.filter(t => t.experienceId === CURRENT_EXPERIENCE_ID);
-        const skipped = allMapped.length - tokensToSend.length;
-        if (skipped > 0) {
-          console.log(`⚠️ ${skipped} token atlandı (experienceId !== ${CURRENT_EXPERIENCE_ID} veya null - bildirim sadece geçerli token\'lara gidecek)`);
-        }
-        console.log('✅ Gönderilecek token sayısı (@kartkedi/knight-rehber):', tokensToSend.length);
+        console.log('✅ MongoDB\'den toplam token sayısı (TÜM PLATFORMLAR):', tokensToSend.length);
       } catch (error) {
         console.error('❌ MongoDB token okuma hatası:', error.message);
         mongoError = error.message;
@@ -812,10 +755,13 @@ app.post('/api/admin/add-photo', (req, res) => {
 
 // Uygulama durumunu güncelle (Fallback)
 app.post('/api/admin/app-status', (req, res) => {
-  const { status, maintenanceMessage } = req.body;
+  const { status, maintenanceMessage, min_version, store_url_android, store_url_ios } = req.body;
 
   database.appSettings.app_status = status || 'active';
   database.appSettings.maintenance_message = maintenanceMessage || 'Uygulama bakım modundadır.';
+  if (min_version !== undefined) database.appSettings.min_version = min_version;
+  if (store_url_android !== undefined) database.appSettings.store_url_android = store_url_android;
+  if (store_url_ios !== undefined) database.appSettings.store_url_ios = store_url_ios;
 
   res.json({
     success: true,
@@ -911,7 +857,10 @@ app.get('/api/app-status', (req, res) => {
   res.json({
     status: database.appSettings.app_status,
     maintenance: database.appSettings.app_status === 'maintenance',
-    maintenanceMessage: database.appSettings.maintenance_message
+    maintenanceMessage: database.appSettings.maintenance_message,
+    min_version: database.appSettings.min_version || '1.0.0',
+    store_url_android: database.appSettings.store_url_android || 'https://play.google.com/store/apps/details?id=com.knightrehber.app',
+    store_url_ios: database.appSettings.store_url_ios || 'https://apps.apple.com/tr/app/knight-rehber/id6756941925'
   });
 });
 
@@ -964,6 +913,18 @@ app.options('/api/push/register', (req, res) => {
   res.status(200).end();
 });
 
+// Blacklist: Bu token'lar MongoDB'ye kaydedilmez (ceylan26 veya eski/geçersiz)
+// BLACKLISTED_PUSH_TOKENS = "token1,token2" (virgülle ayrılmış tam Expo push token)
+// BLACKLISTED_EXPERIENCE_IDS = "@user/dev-app" (belirli experienceId'leri engelle - örn. test projeleri)
+const BLACKLISTED_PUSH_TOKENS_LIST = (process.env.BLACKLISTED_PUSH_TOKENS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const BLACKLISTED_EXPERIENCE_IDS_LIST = (process.env.BLACKLISTED_EXPERIENCE_IDS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
 // Push token kaydet
 app.post('/api/push/register', async (req, res) => {
   try {
@@ -987,6 +948,25 @@ app.post('/api/push/register', async (req, res) => {
     const tokenStr = String(token).trim();
     const expId = experienceId ? String(experienceId).trim() : null;
     const platformStr = platform ? String(platform).trim().toLowerCase() : null;
+    
+    // Eski/geçersiz token formatı – sadece geçerli Expo formatını kabul et
+    const isValidFormat = tokenStr.startsWith('ExponentPushToken[') && tokenStr.endsWith(']') && tokenStr.length >= 30 && tokenStr.length <= 250;
+    if (!isValidFormat) {
+      console.log('❌ Eski/geçersiz token formatı, MongoDB\'ye kaydedilmedi:', tokenStr.substring(0, 40) + '...');
+      return res.status(200).json({ success: true, message: 'Token formatı kabul edilmedi (eski/geçersiz)' });
+    }
+    
+    // Blacklist – tam token eşleşmesi
+    if (BLACKLISTED_PUSH_TOKENS_LIST.length > 0 && BLACKLISTED_PUSH_TOKENS_LIST.includes(tokenStr)) {
+      console.log('❌ Blacklist: Token kaydedilmedi (engelli token listesi)');
+      return res.status(200).json({ success: true, message: 'Token kabul edilmedi (blacklist)' });
+    }
+    
+    // Blacklist – experienceId ile engelleme (test projeleri vb.)
+    if (BLACKLISTED_EXPERIENCE_IDS_LIST.length > 0 && expId && BLACKLISTED_EXPERIENCE_IDS_LIST.includes(expId)) {
+      console.log('❌ Blacklist: experienceId engelli:', expId);
+      return res.status(200).json({ success: true, message: 'Token kabul edilmedi (experienceId blacklist)' });
+    }
     
     console.log('📝 Token uzunluğu:', tokenStr.length);
     console.log('📝 Token formatı:', tokenStr.substring(0, 30) + '...');
@@ -1252,10 +1232,18 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
     if (isMongoConnected && db) {
       try {
         const bannersCollection = db.collection('reklam_bannerlar');
-        const banners = await bannersCollection
+        let banners = await bannersCollection
           .find({ position, active: true })
-          .sort({ createdAt: -1 }) // En yeni önce
           .toArray();
+        // order: 1 = en üstte (yoksa 999 = sona), sonra en yeni
+        if (banners && banners.length > 0) {
+          banners = banners.sort((a, b) => {
+            const orderA = a.order != null ? a.order : 999;
+            const orderB = b.order != null ? b.order : 999;
+            if (orderA !== orderB) return orderA - orderB;
+            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          });
+        }
         if (banners && banners.length > 0) {
           // ImageBB ve Imgur album URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
           const baseUrl = `https://${req.get('host')}`;
@@ -1286,7 +1274,12 @@ app.get('/api/reklam-banner/:position', async (req, res) => {
     }
     
     const banners = database.reklamBannerlar.filter(b => b.position === position && b.active);
-    const sortedBanners = banners.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const sortedBanners = banners.sort((a, b) => {
+      const orderA = a.order != null ? a.order : 999;
+      const orderB = b.order != null ? b.order : 999;
+      if (orderA !== orderB) return orderA - orderB;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
     
     // ImageBB ve Imgur album URL'lerini proxy URL'ye çevir (Vercel'de her zaman HTTPS)
     const baseUrl = `https://${req.get('host')}`;
@@ -1324,7 +1317,7 @@ app.get('/api/admin/banners', async (req, res) => {
         const bannersCollection = db.collection('reklam_bannerlar');
         const banners = await bannersCollection
           .find({})
-          .sort({ position: 1, createdAt: -1 })
+          .sort({ position: 1, order: 1, createdAt: -1 })
           .toArray();
         return res.json(banners);
       } catch (error) {
@@ -1334,6 +1327,9 @@ app.get('/api/admin/banners', async (req, res) => {
     
     res.json(database.reklamBannerlar.sort((a, b) => {
       if (a.position !== b.position) return a.position.localeCompare(b.position);
+      const orderA = a.order != null ? a.order : 999;
+      const orderB = b.order != null ? b.order : 999;
+      if (orderA !== orderB) return orderA - orderB;
       return new Date(b.createdAt) - new Date(a.createdAt);
     }));
   } catch (error) {
@@ -1388,7 +1384,7 @@ function convertImageUrl(url) {
 
 app.post('/api/admin/banner', async (req, res) => {
   try {
-    const { position, imageUrl, clickUrl, active = true } = req.body || {};
+    const { position, imageUrl, clickUrl, active = true, order } = req.body || {};
     
     if (!position) {
       return res.status(400).json({ success: false, error: 'Position gerekli' });
@@ -1424,12 +1420,14 @@ app.post('/api/admin/banner', async (req, res) => {
     // Imgur/ImageBB URL'ini düzelt
     const convertedImageUrl = imageUrl ? convertImageUrl(imageUrl) : null;
     
+    const orderNum = order != null && order !== '' ? parseInt(order, 10) : 999;
     const banner = {
       id: Date.now(),
       position: String(position).trim(),
       imageUrl: convertedImageUrl,
       clickUrl: clickUrl ? String(clickUrl).trim() : null,
       active: active !== false,
+      order: isNaN(orderNum) ? 999 : orderNum,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1458,6 +1456,35 @@ app.post('/api/admin/banner', async (req, res) => {
         error: 'MongoDB bağlantısı yok. Banner kaydedilemedi. Lütfen MONGODB_URI environment variable\'ını kontrol edin.' 
       });
     }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Banner sıralaması güncelle
+app.patch('/api/admin/banner/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { order } = req.body || {};
+    if (order == null || order === '') {
+      return res.status(400).json({ success: false, error: 'order gerekli' });
+    }
+    const orderNum = parseInt(order, 10);
+    if (isNaN(orderNum)) {
+      return res.status(400).json({ success: false, error: 'Geçersiz sıra numarası' });
+    }
+    const isMongoConnected = await connectToMongoDB();
+    if (isMongoConnected && db) {
+      const bannersCollection = db.collection('reklam_bannerlar');
+      const result = await bannersCollection.updateOne(
+        { id },
+        { $set: { order: orderNum, updatedAt: new Date().toISOString() } }
+      );
+      if (result.matchedCount > 0) {
+        return res.json({ success: true, message: 'Sıralama güncellendi' });
+      }
+    }
+    return res.status(404).json({ success: false, error: 'Banner bulunamadı' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
