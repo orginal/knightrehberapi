@@ -65,6 +65,45 @@ let guncellemeler = [
 let bildirimler = [];
 let userTokens = []; // Fallback için (MongoDB bağlantısı yoksa)
 
+// Uygulama ayarları - zorunlu güncelleme kontrolü için
+const appSettings = {
+  app_status: 'active',
+  maintenance_message: 'Uygulama bakım modundadır.',
+  min_version: process.env.MIN_VERSION || '1.2.1',
+  store_url_android: process.env.STORE_URL_ANDROID || 'https://play.google.com/store/apps/details?id=com.knightrehber.app',
+  store_url_ios: process.env.STORE_URL_IOS || 'https://apps.apple.com/tr/app/knight-rehber/id6756941925'
+};
+
+// Eski projeye (@ceylan26) ait token blacklist - bu token'lar gönderim ve listelemeden hariç tutulur
+const BLACKLISTED_PUSH_TOKENS = (process.env.BLACKLISTED_PUSH_TOKENS || [
+  'ExponentPushToken[7sdzYUFq22KgVTyRG09Yw-]',
+  'ExponentPushToken[DsFoEKHv6VWSRHPy6JqD7q]',
+  'ExponentPushToken[GnmXG6NCLtdLzdNFcMZv_u]',
+  'ExponentPushToken[nGhpwUMUcCdjl54RRadIJE]',
+  'ExponentPushToken[PlozzGJ_-nG2Ixt4w3Oj37]'
+].join(',')).split(',').map(s => s.trim()).filter(Boolean);
+
+// Blacklist set'ini oluştur (statik + MongoDB) - tek sorgu ile
+const getBlacklistSet = async (dbInstance) => {
+  const set = new Set(BLACKLISTED_PUSH_TOKENS.map(b => String(b).trim()));
+  if (dbInstance) {
+    try {
+      const list = await dbInstance.collection('push_token_blacklist').find({}).project({ token: 1 }).toArray();
+      list.forEach(x => set.add(String(x.token).trim()));
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  return set;
+};
+
+// Token blacklist'te mi (senkron - sadece statik liste, hızlı kontrol için)
+const isTokenBlacklisted = (token) => {
+  if (!token || typeof token !== 'string') return false;
+  const t = String(token).trim();
+  return BLACKLISTED_PUSH_TOKENS.some(b => t === b || t === String(b).trim());
+};
+
 // Reklam Banner'ları - position: 'home', 'merchant', 'goldbar', 'karakter', 'skill', 'chardiz'
 let reklamBannerlar = [];
 
@@ -214,9 +253,6 @@ async function connectToMongoDB() {
 // Uygulama başlangıcında MongoDB'ye bağlan
 connectToMongoDB().catch(console.error);
 
-// Bu projeye ait experienceId - sadece bu token'lara bildirim gider (Expo aynı istekte farklı projelere izin vermez)
-const CURRENT_EXPERIENCE_ID = '@kartkedi/knight-rehber';
-
 // Expo Push Notification gönderme fonksiyonu
 // pushTokens: Array of {token: string, experienceId: string|null} veya string array
 async function sendExpoPushNotification(pushTokens, title, message, imageUrl = null) {
@@ -330,6 +366,34 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
           message: errorText,
           tokenCount: tokens.length
         });
+        // PUSH_TOO_MANY_EXPERIENCE_IDS: Eski projedeki (@ceylan26 vb.) token'ları MongoDB blacklist'e ekle
+        if (response.status === 400 && errorText.includes('PUSH_TOO_MANY_EXPERIENCE_IDS')) {
+          try {
+            const errJson = JSON.parse(errorText);
+            const details = errJson?.errors?.[0]?.details;
+            if (details && typeof details === 'object') {
+              const allowedProject = '@kartkedi/knight-rehber';
+              for (const [project, tokenList] of Object.entries(details)) {
+                if (project !== allowedProject && Array.isArray(tokenList) && tokenList.length > 0) {
+                  const isMongoConnected = await connectToMongoDB();
+                  if (isMongoConnected && db) {
+                    const blacklistCol = db.collection('push_token_blacklist');
+                    for (const tok of tokenList) {
+                      await blacklistCol.updateOne(
+                        { token: tok },
+                        { $set: { token: tok, reason: `eski_proje:${project}`, addedAt: new Date() } },
+                        { upsert: true }
+                      );
+                    }
+                    console.log(`✅ ${tokenList.length} token blacklist'e eklendi (${project})`);
+                  }
+                }
+              }
+            }
+          } catch (parseErr) {
+            console.error('Blacklist parse hatası:', parseErr?.message);
+          }
+        }
         continue;
       }
 
@@ -422,19 +486,16 @@ app.get('/api/admin/mongo-status', async (req, res) => {
     if (isMongoConnected && db) {
       try {
         const tokensCollection = db.collection('push_tokens');
-        tokenCount = await tokensCollection.countDocuments();
-        tokens = await tokensCollection.find({}).toArray();
+        const blacklistSet = await getBlacklistSet(db);
+        const allT = await tokensCollection.find({}).toArray();
+        tokens = allT.filter(t => !blacklistSet.has(String(t.token || '').trim()));
+        tokenCount = tokens.length;
         
-        // ExperienceId'ye göre say
-        kartkediCount = await tokensCollection.countDocuments({ experienceId: '@kartkedi/knight-rehber' });
-        ceylan26Count = await tokensCollection.countDocuments({ experienceId: '@ceylan26/knight-rehber' });
-        mike0835Count = await tokensCollection.countDocuments({ experienceId: '@mike0835/knight-rehber' });
-        nullExpIdCount = await tokensCollection.countDocuments({ 
-          $or: [
-            { experienceId: null },
-            { experienceId: { $exists: false } }
-          ]
-        });
+        // ExperienceId'ye göre say (blacklist hariç)
+        kartkediCount = tokens.filter(t => t.experienceId === '@kartkedi/knight-rehber').length;
+        ceylan26Count = tokens.filter(t => t.experienceId === '@ceylan26/knight-rehber').length;
+        mike0835Count = tokens.filter(t => t.experienceId === '@mike0835/knight-rehber').length;
+        nullExpIdCount = tokens.filter(t => !t.experienceId || t.experienceId === '').length;
       } catch (error) {
         console.error('❌ MongoDB token okuma hatası:', error.message);
       }
@@ -465,13 +526,15 @@ app.get('/api/admin/stats', async (req, res) => {
   let mongoTokenCount = 0;
   let memoryTokenCount = userTokens.length;
   
-  // MongoDB'den token sayısını al
+  // MongoDB'den token sayısını al (blacklist hariç)
   const isMongoConnected = await connectToMongoDB();
   if (isMongoConnected && db) {
     try {
       const tokensCollection = db.collection('push_tokens');
-      mongoTokenCount = await tokensCollection.countDocuments();
-      console.log('📊 MongoDB token sayısı:', mongoTokenCount);
+      const blacklistSet = await getBlacklistSet(db);
+      const allT = await tokensCollection.find({}).toArray();
+      mongoTokenCount = allT.filter(t => !blacklistSet.has(String(t.token || '').trim())).length;
+      console.log('📊 MongoDB token sayısı (blacklist hariç):', mongoTokenCount);
     } catch (error) {
       console.error('❌ MongoDB token sayısı hatası:', error.message);
     }
@@ -507,11 +570,13 @@ app.get('/api/admin/tokens', async (req, res) => {
     if (isMongoConnected && db) {
       try {
         const tokensCollection = db.collection('push_tokens');
-        tokens = await tokensCollection.find({})
+        const allTokens = await tokensCollection.find({})
           .sort({ updatedAt: -1 })
           .limit(100)
           .toArray();
-        console.log('📊 MongoDB\'den token listesi alındı:', tokens.length);
+        const blacklistSet = await getBlacklistSet(db);
+        tokens = allTokens.filter(t => !blacklistSet.has(String(t.token || '').trim()));
+        console.log('📊 MongoDB\'den token listesi alındı (blacklist hariç):', tokens.length);
       } catch (error) {
         console.error('❌ MongoDB token listesi hatası:', error.message);
       }
@@ -538,57 +603,6 @@ app.get('/api/admin/tokens', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Token listesi hatası:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Geçersiz token'ları temizle: experienceId null veya bu proje (@kartkedi/knight-rehber) değilse sil
-app.delete('/api/admin/push-tokens/clean-invalid', async (req, res) => {
-  try {
-    const isMongoConnected = await connectToMongoDB();
-    if (!isMongoConnected || !db) {
-      return res.status(500).json({ success: false, error: 'MongoDB bağlantısı yok' });
-    }
-    const tokensCollection = db.collection('push_tokens');
-    const result = await tokensCollection.deleteMany({
-      $or: [
-        { experienceId: null },
-        { experienceId: { $exists: false } },
-        { experienceId: { $nin: [CURRENT_EXPERIENCE_ID] } }
-      ]
-    });
-    console.log('🧹 Geçersiz token temizlendi:', result.deletedCount);
-    res.json({
-      success: true,
-      message: `${result.deletedCount} geçersiz token silindi. Sadece @kartkedi/knight-rehber token'ları kaldı.`,
-      deletedCount: result.deletedCount
-    });
-  } catch (error) {
-    console.error('❌ Geçersiz token temizleme hatası:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Tek bir token'ı sil (body: { token: "ExponentPushToken[...]" })
-app.delete('/api/admin/push-tokens/one', async (req, res) => {
-  try {
-    const tokenStr = (req.body?.token || req.query?.token || '').trim();
-    if (!tokenStr) {
-      return res.status(400).json({ success: false, error: 'token gerekli (body veya query)' });
-    }
-    const isMongoConnected = await connectToMongoDB();
-    if (!isMongoConnected || !db) {
-      return res.status(500).json({ success: false, error: 'MongoDB bağlantısı yok' });
-    }
-    const tokensCollection = db.collection('push_tokens');
-    const result = await tokensCollection.deleteOne({ token: tokenStr });
-    if (result.deletedCount === 0) {
-      return res.json({ success: true, message: 'Token bulunamadı (zaten silinmiş olabilir)', deletedCount: 0 });
-    }
-    console.log('🗑️ Token silindi:', tokenStr.substring(0, 30) + '...');
-    res.json({ success: true, message: 'Token silindi', deletedCount: 1 });
-  } catch (error) {
-    console.error('❌ Token silme hatası:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -742,10 +756,15 @@ app.post('/api/admin/send-notification', async (req, res) => {
       try {
         const tokensCollection = db.collection('push_tokens');
         
-        // ✅ TÜM TOKEN'LARI AL - ExperienceId'ye göre filtreleme YOK
-        // Tüm platformlardan (Android, iOS) ve tüm experienceId'lerden token'ları al
-        const allTokens = await tokensCollection.find({}).toArray();
-        console.log('📊 MongoDB\'de toplam token sayısı:', allTokens.length);
+        // ✅ TÜM TOKEN'LARI AL - Blacklist (eski @ceylan26 token'ları) hariç
+        const blacklistSet = await getBlacklistSet(db);
+        const allTokensRaw = await tokensCollection.find({}).toArray();
+        const allTokens = allTokensRaw.filter(t => !blacklistSet.has(String(t.token || '').trim()));
+        const blacklistedCount = allTokensRaw.length - allTokens.length;
+        if (blacklistedCount > 0) {
+          console.log(`⚠️ ${blacklistedCount} eski/blacklist token atlandı`);
+        }
+        console.log('📊 MongoDB\'de toplam token sayısı (blacklist hariç):', allTokens.length);
         
         // ExperienceId'ye göre grupla (sadece log için)
         const tokensByExpId = {};
@@ -763,18 +782,13 @@ app.post('/api/admin/send-notification', async (req, res) => {
           console.log(`📱 ${expId}: ${tokensByExpId[expId].length} token`);
         });
         
-        // ✅ Sadece bu projeye (@kartkedi/knight-rehber) ait token'lara gönder - eski/başka proje token'ları atlanır (Expo 400 hatası önlenir)
-        const allMapped = allTokens.map(t => ({
+        // ✅ TÜM TOKEN'LARI experienceId ve platform ile birlikte al - Gruplama için
+        tokensToSend = allTokens.map(t => ({
           token: t.token,
           experienceId: t.experienceId || null,
           platform: t.platform || null
         })).filter(t => t.token && t.token.trim());
-        tokensToSend = allMapped.filter(t => t.experienceId === CURRENT_EXPERIENCE_ID);
-        const skipped = allMapped.length - tokensToSend.length;
-        if (skipped > 0) {
-          console.log(`⚠️ ${skipped} token atlandı (experienceId !== ${CURRENT_EXPERIENCE_ID} veya null - bildirim sadece geçerli token\'lara gidecek)`);
-        }
-        console.log('✅ Gönderilecek token sayısı (@kartkedi/knight-rehber):', tokensToSend.length);
+        console.log('✅ MongoDB\'den toplam token sayısı (TÜM PLATFORMLAR):', tokensToSend.length);
       } catch (error) {
         console.error('❌ MongoDB token okuma hatası:', error.message);
         mongoError = error.message;
@@ -992,6 +1006,18 @@ app.delete('/api/admin/delete-update/:id', async (req, res) => {
 });
 
 // ========== MOBIL API ==========
+
+// Uygulama durumu - zorunlu güncelleme kontrolü için (min_version)
+app.get('/api/app-status', (req, res) => {
+  res.json({
+    status: appSettings.app_status,
+    maintenance: appSettings.app_status === 'maintenance',
+    maintenanceMessage: appSettings.maintenance_message,
+    min_version: appSettings.min_version,
+    store_url_android: appSettings.store_url_android,
+    store_url_ios: appSettings.store_url_ios
+  });
+});
 
 app.get('/api/guncelleme-notlari', async (req, res) => {
   try {
