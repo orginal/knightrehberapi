@@ -291,32 +291,30 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   console.log(`📤 Bildirim başlığı: "${title}"`);
   console.log(`📤 Bildirim mesajı: "${message}"`);
 
-  // Token'ları experienceId'ye göre grupla
-  // iOS token'ları (platform='ios' ve experienceId=null) tek grup olarak gönderilebilir
-  // Diğer experienceId olmayan token'lar atlanır (farklı projelere ait olabilir)
+  // Token'ları experienceId'ye göre grupla. Sadece ceylan26 blacklist'te atlanıyor, gerisine bildirim gidiyor.
   const tokensByExpId = {};
+  const DEFAULT_EXP_ID = '@kartkedi/knight-rehber';
   validTokens.forEach(t => {
-    // iOS token'ları: platform='ios' ve experienceId=null -> 'IOS_NO_EXP_ID' grubuna ekle
+    // iOS + null experienceId -> IOS_NO_EXP_ID
     if (!t.experienceId && t.platform === 'ios') {
       const expId = 'IOS_NO_EXP_ID';
-      if (!tokensByExpId[expId]) {
-        tokensByExpId[expId] = [];
-      }
+      if (!tokensByExpId[expId]) tokensByExpId[expId] = [];
       tokensByExpId[expId].push(t.token);
       return;
     }
-    
+    // Android veya platform bilinmeyen + null experienceId -> production ile gönder (ceylan26 olanlar 400'de blacklist'lenir)
+    if (!t.experienceId && (t.platform === 'android' || !t.platform)) {
+      if (!tokensByExpId[DEFAULT_EXP_ID]) tokensByExpId[DEFAULT_EXP_ID] = [];
+      tokensByExpId[DEFAULT_EXP_ID].push(t.token);
+      return;
+    }
     // experienceId'si olan token'lar -> experienceId'ye göre grupla
     if (t.experienceId) {
       const expId = t.experienceId;
-      if (!tokensByExpId[expId]) {
-        tokensByExpId[expId] = [];
-      }
+      if (!tokensByExpId[expId]) tokensByExpId[expId] = [];
       tokensByExpId[expId].push(t.token);
       return;
     }
-    
-    // experienceId olmayan ve iOS olmayan token'lar atlanır
     console.log(`⚠️ Token atlandı (experienceId yok, platform: ${t.platform || 'bilinmiyor'}): ${t.token.substring(0, 30)}...`);
   });
 
