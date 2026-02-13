@@ -366,7 +366,7 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
           message: errorText,
           tokenCount: tokens.length
         });
-        // PUSH_TOO_MANY_EXPERIENCE_IDS: Eski projedeki (@ceylan26 vb.) token'ları MongoDB blacklist'e ekle
+        // PUSH_TOO_MANY_EXPERIENCE_IDS: Eski projedeki (@ceylan26 vb.) token'ları blacklist'e ekle, sonra sadece @kartkedi token'larıyla tekrar gönder
         if (response.status === 400 && errorText.includes('PUSH_TOO_MANY_EXPERIENCE_IDS')) {
           try {
             const errJson = JSON.parse(errorText);
@@ -387,6 +387,49 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
                     }
                     console.log(`✅ ${tokenList.length} token blacklist'e eklendi (${project})`);
                   }
+                }
+              }
+              // Retry: Sadece @kartkedi/knight-rehber token'larıyla tekrar gönder
+              const ourTokenList = details[allowedProject];
+              if (Array.isArray(ourTokenList) && ourTokenList.length > 0) {
+                console.log(`🔄 ${ourTokenList.length} token için tekrar gönderiliyor (${allowedProject})...`);
+                const retryMessages = ourTokenList.map(token => ({
+                  to: token,
+                  sound: 'default',
+                  title: title,
+                  body: message,
+                  data: { title, message, ...(imageUrl && { imageUrl }) },
+                  priority: 'high',
+                  badge: 1
+                }));
+                const retryResponse = await fetch('https://exp.host/--/api/v2/push/send', {
+                  method: 'POST',
+                  headers: {
+                    'Accept': 'application/json',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(retryMessages),
+                });
+                if (retryResponse.ok) {
+                  const retryResult = await retryResponse.json();
+                  const okCount = retryResult.data?.filter(r => r.status === 'ok').length || 0;
+                  const failCount = retryResult.data?.filter(r => r.status !== 'ok').length || 0;
+                  totalSuccess += okCount;
+                  totalFailed += failCount;
+                  if (retryResult.data) {
+                    retryResult.data.forEach((item, idx) => {
+                      if (item.status === 'ok') {
+                        console.log(`✅ ${allowedProject} (retry) - Token ${idx + 1}: OK`);
+                      } else {
+                        console.error(`❌ ${allowedProject} (retry) - Token ${idx + 1}: ${item.message || item.status}`);
+                      }
+                    });
+                  }
+                  console.log(`✅ Retry sonucu: ${okCount} başarılı, ${failCount} başarısız`);
+                } else {
+                  totalFailed += ourTokenList.length;
+                  console.error(`❌ Retry isteği başarısız:`, retryResponse.status);
                 }
               }
             }
