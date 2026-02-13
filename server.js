@@ -273,11 +273,16 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
     };
   });
 
-  // Token'ları temizle ve geçerli olanları filtrele
+  // experienceId null / YOK / boş -> gönderimde "yok" say (kartkedi batch'ine gidecek)
+  const expIdOrNull = (v) => {
+    const s = v ? String(v).trim() : '';
+    if (!s || s.toUpperCase() === 'YOK') return null;
+    return s;
+  };
   const validTokens = tokenObjects
     .map(t => ({
       token: String(t.token).trim(),
-      experienceId: t.experienceId ? String(t.experienceId).trim() : null,
+      experienceId: expIdOrNull(t.experienceId),
       platform: t.platform ? String(t.platform).trim().toLowerCase() : null
     }))
     .filter(t => t.token && t.token.startsWith('ExponentPushToken[') && t.token.length > 20);
@@ -291,24 +296,23 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   console.log(`📤 Bildirim başlığı: "${title}"`);
   console.log(`📤 Bildirim mesajı: "${message}"`);
 
-  // Token'ları experienceId'ye göre grupla. Sadece ceylan26 blacklist'te atlanıyor, gerisine bildirim gidiyor.
+  // kartkedi + nullExpId aynı anda tek batch: hepsini @kartkedi grubuna koy. ceylan26 varsa 400'de blacklist'lenir, retry'da sadece kartkedi'ye gider.
   const tokensByExpId = {};
   const DEFAULT_EXP_ID = '@kartkedi/knight-rehber';
   validTokens.forEach(t => {
-    // iOS + null experienceId -> IOS_NO_EXP_ID
+    // iOS + null experienceId -> kartkedi ile aynı batch'e (ceylan26 olanlar 400'de atlanır)
     if (!t.experienceId && t.platform === 'ios') {
-      const expId = 'IOS_NO_EXP_ID';
-      if (!tokensByExpId[expId]) tokensByExpId[expId] = [];
-      tokensByExpId[expId].push(t.token);
+      if (!tokensByExpId[DEFAULT_EXP_ID]) tokensByExpId[DEFAULT_EXP_ID] = [];
+      tokensByExpId[DEFAULT_EXP_ID].push(t.token);
       return;
     }
-    // Android veya platform bilinmeyen + null experienceId -> production ile gönder (ceylan26 olanlar 400'de blacklist'lenir)
+    // Android veya platform bilinmeyen + null experienceId -> kartkedi batch
     if (!t.experienceId && (t.platform === 'android' || !t.platform)) {
       if (!tokensByExpId[DEFAULT_EXP_ID]) tokensByExpId[DEFAULT_EXP_ID] = [];
       tokensByExpId[DEFAULT_EXP_ID].push(t.token);
       return;
     }
-    // experienceId'si olan token'lar -> experienceId'ye göre grupla
+    // experienceId'si olan token'lar -> experienceId'ye göre grupla (sadece @kartkedi dışı projeler ayrı kalır)
     if (t.experienceId) {
       const expId = t.experienceId;
       if (!tokensByExpId[expId]) tokensByExpId[expId] = [];
@@ -456,6 +460,28 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
       
       totalSuccess += successCount;
       totalFailed += failedCount;
+
+      // Ceylan26 / APNs hatası alan token'ları blacklist'e ekle (bir daha denemeyelim; 11 iOS null = eski build)
+      if (failedCount > 0 && result.data && Array.isArray(result.data)) {
+        const isMongoConnected = await connectToMongoDB();
+        if (isMongoConnected && db) {
+          const blacklistCol = db.collection('push_token_blacklist');
+          for (let i = 0; i < result.data.length; i++) {
+            const item = result.data[i];
+            if (item.status !== 'ok' && tokens[i]) {
+              const msg = (item.message || '').toLowerCase();
+              if (msg.includes('apns credentials') || msg.includes('@ceylan26')) {
+                await blacklistCol.updateOne(
+                  { token: tokens[i] },
+                  { $set: { token: tokens[i], reason: 'apns_eski_proje_ceylan26', addedAt: new Date() } },
+                  { upsert: true }
+                );
+                console.log(`✅ Token blacklist'e eklendi (ceylan26/APNs): ${tokens[i].substring(0, 35)}...`);
+              }
+            }
+          }
+        }
+      }
       
       // Hata detaylarını topla
       if (failedCount > 0) {
