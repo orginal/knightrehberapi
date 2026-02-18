@@ -556,12 +556,11 @@ app.get('/api/admin/mongo-status', async (req, res) => {
     if (isMongoConnected && db) {
       try {
         const tokensCollection = db.collection('push_tokens');
-        const blacklistSet = await getBlacklistSet(db);
         const allT = await tokensCollection.find({}).toArray();
-        tokens = allT.filter(t => !blacklistSet.has(String(t.token || '').trim()));
+        tokens = allT;
         tokenCount = tokens.length;
         
-        // ExperienceId'ye göre say (blacklist hariç)
+        // ExperienceId'ye göre say (tüm tokenlar)
         kartkediCount = tokens.filter(t => t.experienceId === '@kartkedi/knight-rehber').length;
         ceylan26Count = tokens.filter(t => t.experienceId === '@ceylan26/knight-rehber').length;
         mike0835Count = tokens.filter(t => t.experienceId === '@mike0835/knight-rehber').length;
@@ -596,15 +595,14 @@ app.get('/api/admin/stats', async (req, res) => {
   let mongoTokenCount = 0;
   let memoryTokenCount = userTokens.length;
   
-  // MongoDB'den token sayısını al (blacklist hariç)
+  // MongoDB'deki toplam token sayısı (panelde doğru sayı görünsün, hepsine bildirim gidecek)
   const isMongoConnected = await connectToMongoDB();
   if (isMongoConnected && db) {
     try {
       const tokensCollection = db.collection('push_tokens');
-      const blacklistSet = await getBlacklistSet(db);
       const allT = await tokensCollection.find({}).toArray();
-      mongoTokenCount = allT.filter(t => !blacklistSet.has(String(t.token || '').trim())).length;
-      console.log('📊 MongoDB token sayısı (blacklist hariç):', mongoTokenCount);
+      mongoTokenCount = allT.length;
+      console.log('📊 MongoDB toplam token sayısı:', mongoTokenCount);
     } catch (error) {
       console.error('❌ MongoDB token sayısı hatası:', error.message);
     }
@@ -640,13 +638,11 @@ app.get('/api/admin/tokens', async (req, res) => {
     if (isMongoConnected && db) {
       try {
         const tokensCollection = db.collection('push_tokens');
-        const allTokens = await tokensCollection.find({})
+        tokens = await tokensCollection.find({})
           .sort({ updatedAt: -1 })
-          .limit(100)
+          .limit(500)
           .toArray();
-        const blacklistSet = await getBlacklistSet(db);
-        tokens = allTokens.filter(t => !blacklistSet.has(String(t.token || '').trim()));
-        console.log('📊 MongoDB\'den token listesi alındı (blacklist hariç):', tokens.length);
+        console.log('📊 MongoDB\'den token listesi alındı (tümü, hepsine bildirim gidecek):', tokens.length);
       } catch (error) {
         console.error('❌ MongoDB token listesi hatası:', error.message);
       }
