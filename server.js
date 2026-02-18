@@ -417,8 +417,10 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
                   const retryResult = await retryResponse.json();
                   const okCount = retryResult.data?.filter(r => r.status === 'ok').length || 0;
                   const failCount = retryResult.data?.filter(r => r.status !== 'ok').length || 0;
+                  // 400'de tokens.length eklemiştik; retry ile düzelt: başarılı = okCount, başarısız = diğer proje (blacklist)
+                  totalFailed -= tokens.length;
+                  totalFailed += (tokens.length - ourTokenList.length) + failCount;
                   totalSuccess += okCount;
-                  totalFailed += failCount;
                   if (retryResult.data) {
                     retryResult.data.forEach((item, idx) => {
                       if (item.status === 'ok') {
@@ -428,7 +430,8 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
                       }
                     });
                   }
-                  console.log(`✅ Retry sonucu: ${okCount} başarılı, ${failCount} başarısız`);
+                  const blacklistedCount = tokens.length - ourTokenList.length;
+                  console.log(`✅ Retry sonucu: ${okCount} başarılı, ${failCount} retry'da hata. ${blacklistedCount} token eski projeye aitti, blacklist'lendi.`);
                 } else {
                   totalFailed += ourTokenList.length;
                   console.error(`❌ Retry isteği başarısız:`, retryResponse.status);
@@ -823,15 +826,14 @@ app.post('/api/admin/send-notification', async (req, res) => {
       try {
         const tokensCollection = db.collection('push_tokens');
         
-        // ✅ TÜM TOKEN'LARI AL - Blacklist (eski @ceylan26 token'ları) hariç
+        // ✅ TÜM TOKEN'LARA GÖNDER (blacklist dahil) - Alamayan almasın, Expo/retry halledecek
+        const allTokens = await tokensCollection.find({}).toArray();
         const blacklistSet = await getBlacklistSet(db);
-        const allTokensRaw = await tokensCollection.find({}).toArray();
-        const allTokens = allTokensRaw.filter(t => !blacklistSet.has(String(t.token || '').trim()));
-        const blacklistedCount = allTokensRaw.length - allTokens.length;
+        const blacklistedCount = allTokens.filter(t => blacklistSet.has(String(t.token || '').trim())).length;
         if (blacklistedCount > 0) {
-          console.log(`⚠️ ${blacklistedCount} eski/blacklist token atlandı`);
+          console.log(`📤 Tüm tokenlere gönderiliyor (blacklist'teki ${blacklistedCount} token dahil), alamayan almasın.`);
         }
-        console.log('📊 MongoDB\'de toplam token sayısı (blacklist hariç):', allTokens.length);
+        console.log('📊 MongoDB\'de toplam token sayısı (hepsi gönderilecek):', allTokens.length);
         
         // ExperienceId'ye göre grupla (sadece log için)
         const tokensByExpId = {};
