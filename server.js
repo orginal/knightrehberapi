@@ -368,68 +368,61 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
           message: errorText,
           tokenCount: tokens.length
         });
-        // PUSH_TOO_MANY_EXPERIENCE_IDS: Farklı projelere ait token'lar aynı istekte; blacklist YOK - sadece @kartkedi ile retry
+        // PUSH_TOO_MANY_EXPERIENCE_IDS: Projelere göre ayrı ayrı gönder - kartkedi + ceylan26 hepsi gitsin
         if (response.status === 400 && errorText.includes('PUSH_TOO_MANY_EXPERIENCE_IDS')) {
           try {
             const errJson = JSON.parse(errorText);
             const details = errJson?.errors?.[0]?.details;
             if (details && typeof details === 'object') {
-              const allowedProject = '@kartkedi/knight-rehber';
-              // Blacklist'e ekleme - güncel cihazlar yanlışlıkla engellenmesin, her seferinde tekrar denenecek
+              totalFailed -= tokens.length;
+              const expoHeaders = {
+                'Accept': 'application/json',
+                'Accept-Encoding': 'gzip, deflate',
+                'Content-Type': 'application/json',
+              };
+              const buildMessage = (token) => ({
+                to: token,
+                sound: 'default',
+                title: title,
+                body: message,
+                data: { title, message, ...(imageUrl && { imageUrl }) },
+                priority: 'high',
+                badge: 1
+              });
               for (const [project, tokenList] of Object.entries(details)) {
-                if (project !== allowedProject && Array.isArray(tokenList) && tokenList.length > 0) {
-                  console.log(`ℹ️ ${tokenList.length} token bu gönderimde ulaşmadı (${project}), blacklist'e alınmadı.`);
-                }
-              }
-              // Retry: Sadece @kartkedi/knight-rehber token'larıyla tekrar gönder
-              const ourTokenList = details[allowedProject];
-              if (Array.isArray(ourTokenList) && ourTokenList.length > 0) {
-                console.log(`🔄 ${ourTokenList.length} token için tekrar gönderiliyor (${allowedProject})...`);
-                const retryMessages = ourTokenList.map(token => ({
-                  to: token,
-                  sound: 'default',
-                  title: title,
-                  body: message,
-                  data: { title, message, ...(imageUrl && { imageUrl }) },
-                  priority: 'high',
-                  badge: 1
-                }));
-                const retryResponse = await fetch('https://exp.host/--/api/v2/push/send', {
+                if (!Array.isArray(tokenList) || tokenList.length === 0) continue;
+                console.log(`📤 ${project} - ${tokenList.length} token'a ayrı istek gönderiliyor...`);
+                const projectMessages = tokenList.map(buildMessage);
+                const projectResponse = await fetch('https://exp.host/--/api/v2/push/send', {
                   method: 'POST',
-                  headers: {
-                    'Accept': 'application/json',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify(retryMessages),
+                  headers: expoHeaders,
+                  body: JSON.stringify(projectMessages),
                 });
-                if (retryResponse.ok) {
-                  const retryResult = await retryResponse.json();
-                  const okCount = retryResult.data?.filter(r => r.status === 'ok').length || 0;
-                  const failCount = retryResult.data?.filter(r => r.status !== 'ok').length || 0;
-                  // 400'de tokens.length eklemiştik; retry ile düzelt: başarılı = okCount, başarısız = diğer proje (blacklist)
-                  totalFailed -= tokens.length;
-                  totalFailed += (tokens.length - ourTokenList.length) + failCount;
+                if (projectResponse.ok) {
+                  const projectResult = await projectResponse.json();
+                  const okCount = projectResult.data?.filter(r => r.status === 'ok').length || 0;
+                  const failCount = projectResult.data?.filter(r => r.status !== 'ok').length || 0;
                   totalSuccess += okCount;
-                  if (retryResult.data) {
-                    retryResult.data.forEach((item, idx) => {
+                  totalFailed += failCount;
+                  if (projectResult.data) {
+                    projectResult.data.forEach((item, idx) => {
                       if (item.status === 'ok') {
-                        console.log(`✅ ${allowedProject} (retry) - Token ${idx + 1}: OK`);
+                        console.log(`✅ ${project} - Token ${idx + 1}: OK`);
                       } else {
-                        console.error(`❌ ${allowedProject} (retry) - Token ${idx + 1}: ${item.message || item.status}`);
+                        console.error(`❌ ${project} - Token ${idx + 1}: ${item.message || item.status}`);
                       }
                     });
                   }
-                  const otherCount = tokens.length - ourTokenList.length;
-                  console.log(`✅ Retry sonucu: ${okCount} başarılı, ${failCount} retry'da hata. ${otherCount} token farklı projede (blacklist yok).`);
+                  console.log(`✅ ${project}: ${okCount} ulaştı, ${failCount} hata`);
                 } else {
-                  totalFailed += ourTokenList.length;
-                  console.error(`❌ Retry isteği başarısız:`, retryResponse.status);
+                  totalFailed += tokenList.length;
+                  const errBody = await projectResponse.text();
+                  console.error(`❌ ${project} isteği başarısız:`, projectResponse.status, errBody?.substring(0, 200));
                 }
               }
             }
           } catch (parseErr) {
-            console.error('Blacklist parse hatası:', parseErr?.message);
+            console.error('PUSH_TOO_MANY_EXPERIENCE_IDS parse hatası:', parseErr?.message);
           }
         }
         continue;
