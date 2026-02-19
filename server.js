@@ -368,27 +368,17 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
           message: errorText,
           tokenCount: tokens.length
         });
-        // PUSH_TOO_MANY_EXPERIENCE_IDS: Eski projedeki (@ceylan26 vb.) token'ları blacklist'e ekle, sonra sadece @kartkedi token'larıyla tekrar gönder
+        // PUSH_TOO_MANY_EXPERIENCE_IDS: Farklı projelere ait token'lar aynı istekte; blacklist YOK - sadece @kartkedi ile retry
         if (response.status === 400 && errorText.includes('PUSH_TOO_MANY_EXPERIENCE_IDS')) {
           try {
             const errJson = JSON.parse(errorText);
             const details = errJson?.errors?.[0]?.details;
             if (details && typeof details === 'object') {
               const allowedProject = '@kartkedi/knight-rehber';
+              // Blacklist'e ekleme - güncel cihazlar yanlışlıkla engellenmesin, her seferinde tekrar denenecek
               for (const [project, tokenList] of Object.entries(details)) {
                 if (project !== allowedProject && Array.isArray(tokenList) && tokenList.length > 0) {
-                  const isMongoConnected = await connectToMongoDB();
-                  if (isMongoConnected && db) {
-                    const blacklistCol = db.collection('push_token_blacklist');
-                    for (const tok of tokenList) {
-                      await blacklistCol.updateOne(
-                        { token: tok },
-                        { $set: { token: tok, reason: `eski_proje:${project}`, addedAt: new Date() } },
-                        { upsert: true }
-                      );
-                    }
-                    console.log(`✅ ${tokenList.length} token blacklist'e eklendi (${project})`);
-                  }
+                  console.log(`ℹ️ ${tokenList.length} token bu gönderimde ulaşmadı (${project}), blacklist'e alınmadı.`);
                 }
               }
               // Retry: Sadece @kartkedi/knight-rehber token'larıyla tekrar gönder
@@ -430,8 +420,8 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
                       }
                     });
                   }
-                  const blacklistedCount = tokens.length - ourTokenList.length;
-                  console.log(`✅ Retry sonucu: ${okCount} başarılı, ${failCount} retry'da hata. ${blacklistedCount} token eski projeye aitti, blacklist'lendi.`);
+                  const otherCount = tokens.length - ourTokenList.length;
+                  console.log(`✅ Retry sonucu: ${okCount} başarılı, ${failCount} retry'da hata. ${otherCount} token farklı projede (blacklist yok).`);
                 } else {
                   totalFailed += ourTokenList.length;
                   console.error(`❌ Retry isteği başarısız:`, retryResponse.status);
@@ -464,27 +454,7 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
       totalSuccess += successCount;
       totalFailed += failedCount;
 
-      // Ceylan26 / APNs hatası alan token'ları blacklist'e ekle (bir daha denemeyelim; 11 iOS null = eski build)
-      if (failedCount > 0 && result.data && Array.isArray(result.data)) {
-        const isMongoConnected = await connectToMongoDB();
-        if (isMongoConnected && db) {
-          const blacklistCol = db.collection('push_token_blacklist');
-          for (let i = 0; i < result.data.length; i++) {
-            const item = result.data[i];
-            if (item.status !== 'ok' && tokens[i]) {
-              const msg = (item.message || '').toLowerCase();
-              if (msg.includes('apns credentials') || msg.includes('@ceylan26')) {
-                await blacklistCol.updateOne(
-                  { token: tokens[i] },
-                  { $set: { token: tokens[i], reason: 'apns_eski_proje_ceylan26', addedAt: new Date() } },
-                  { upsert: true }
-                );
-                console.log(`✅ Token blacklist'e eklendi (ceylan26/APNs): ${tokens[i].substring(0, 35)}...`);
-              }
-            }
-          }
-        }
-      }
+      // Hata alan token'ları blacklist'e EKLEME - güncel cihazlar engellenmesin, her gönderimde tekrar denenecek
       
       // Hata detaylarını topla
       if (failedCount > 0) {
