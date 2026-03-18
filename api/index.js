@@ -224,6 +224,18 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
     return { success: 0, failed: 0, error: 'Push token bulunamadı' };
   }
 
+  // Expo Push API bazı string alanlar için max uzunluk kuralı uygular.
+  // Payload'daki herhangi bir stringin sınırı aşması durumunda tüm istek 400 ile reddedilebilir.
+  const truncateExpoString = (value, max = 100) => {
+    if (value === undefined || value === null) return value;
+    const str = String(value);
+    return str.length > max ? str.slice(0, max) : str;
+  };
+
+  const safeTitle = truncateExpoString(title, 100);
+  const safeMessage = truncateExpoString(message, 100);
+  const safeImageUrl = imageUrl ? truncateExpoString(imageUrl, 100) : null;
+
   // Token'ları normalize et: eğer string array ise object array'e çevir
   const tokenObjects = pushTokens.map(t => {
     if (typeof t === 'string') {
@@ -300,9 +312,9 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
       const messages = tokens.map(token => ({
         to: token,
         sound: 'default',
-        title: title,
-        body: message,
-        data: { title, message, ...(imageUrl && { imageUrl }) },
+        title: safeTitle,
+        body: safeMessage,
+        data: { title: safeTitle, message: safeMessage, ...(safeImageUrl && { imageUrl: safeImageUrl }) },
         priority: 'high',
         badge: 1
       }));
