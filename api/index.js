@@ -236,6 +236,15 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   const safeMessage = truncateExpoString(message, 100);
   const safeImageUrl = imageUrl ? truncateExpoString(imageUrl, 100) : null;
 
+  // DB'de token alanı bazen fazla karakter/ek metin içerebiliyor.
+  // Expo sadece ExponentPushToken[...] formatındaki kısmı kabul ediyor.
+  const normalizeExpoToken = (value) => {
+    if (value === undefined || value === null) return null;
+    const str = String(value).trim();
+    const match = str.match(/ExponentPushToken\[[^\]]+\]/);
+    return match ? match[0] : str;
+  };
+
   // Token'ları normalize et: eğer string array ise object array'e çevir
   const tokenObjects = pushTokens.map(t => {
     if (typeof t === 'string') {
@@ -251,7 +260,7 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   // Token'ları temizle ve geçerli olanları filtrele
   const validTokens = tokenObjects
     .map(t => ({
-      token: String(t.token).trim(),
+      token: normalizeExpoToken(t.token),
       experienceId: t.experienceId ? String(t.experienceId).trim() : null,
       platform: t.platform ? String(t.platform).trim().toLowerCase() : null
     }))
@@ -304,12 +313,16 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   let totalFailed = 0;
   let allErrorDetails = [];
 
+  // Expo Push API'de tek request için mesaj sayısı limiti vardır.
+  // 105 gibi değerlerde başarısız olabiliyor, bu yüzden 100'lü parçalara böleceğiz.
+  const MAX_MESSAGES_PER_REQUEST = 100;
+
   // Her experienceId grubu için ayrı request gönder
   for (const [expId, tokens] of Object.entries(tokensByExpId)) {
     try {
       console.log(`📤 ${expId || 'null'} experienceId için ${tokens.length} token'a bildirim gönderiliyor...`);
-      
-      const messages = tokens.map(token => ({
+
+      const buildMessage = (token) => ({
         to: token,
         sound: 'default',
         title: safeTitle,
@@ -317,61 +330,66 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
         data: { title: safeTitle, message: safeMessage, ...(safeImageUrl && { imageUrl: safeImageUrl }) },
         priority: 'high',
         badge: 1
-      }));
-
-      const response = await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Accept-Encoding': 'gzip, deflate',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(messages),
       });
-      
-      console.log(`📤 ${expId || 'null'} - Expo Push API response status:`, response.status);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`❌ ${expId || 'null'} - Expo Push API hatası:`, response.status, errorText);
-        totalFailed += tokens.length;
-        allErrorDetails.push({
-          experienceId: expId,
-          status: response.status,
-          message: errorText,
-          tokenCount: tokens.length
+      for (let i = 0; i < tokens.length; i += MAX_MESSAGES_PER_REQUEST) {
+        const chunkTokens = tokens.slice(i, i + MAX_MESSAGES_PER_REQUEST);
+        const chunkMessages = chunkTokens.map(buildMessage);
+
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip, deflate',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(chunkMessages),
         });
-        continue;
-      }
+        
+        console.log(`📤 ${expId || 'null'} - Expo Push API response status:`, response.status);
 
-      const result = await response.json();
-      
-      // Her bir token için detaylı log
-      if (result.data && Array.isArray(result.data)) {
-        result.data.forEach((item, index) => {
-          if (item.status === 'ok') {
-            console.log(`✅ ${expId || 'null'} - Token ${index + 1}: OK - ${item.id || 'ID yok'}`);
-          } else {
-            console.error(`❌ ${expId || 'null'} - Token ${index + 1}: ${item.status} - ${item.message || 'Bilinmeyen hata'}`);
-          }
-        });
-      }
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`❌ ${expId || 'null'} - Expo Push API hatası:`, response.status, errorText);
+          totalFailed += chunkTokens.length;
+          allErrorDetails.push({
+            experienceId: expId,
+            status: response.status,
+            message: errorText,
+            tokenCount: chunkTokens.length
+          });
+          continue;
+        }
 
-      const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
-      const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
-      
-      totalSuccess += successCount;
-      totalFailed += failedCount;
-      
-      // Hata detaylarını topla
-      if (failedCount > 0) {
-        const errors = result.data?.filter(r => r.status !== 'ok');
-        allErrorDetails.push(...errors.map(e => ({
-          experienceId: expId,
-          status: e.status,
-          message: e.message || 'Bilinmeyen hata',
-          details: e.details || null
-        })));
+        const result = await response.json();
+        
+        // Her bir token için detaylı log
+        if (result.data && Array.isArray(result.data)) {
+          result.data.forEach((item, index) => {
+            if (item.status === 'ok') {
+              console.log(`✅ ${expId || 'null'} - Token ${index + 1}: OK - ${item.id || 'ID yok'}`);
+            } else {
+              console.error(`❌ ${expId || 'null'} - Token ${index + 1}: ${item.status} - ${item.message || 'Bilinmeyen hata'}`);
+            }
+          });
+        }
+
+        const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
+        const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
+        
+        totalSuccess += successCount;
+        totalFailed += failedCount;
+        
+        // Hata detaylarını topla
+        if (failedCount > 0) {
+          const errors = result.data?.filter(r => r.status !== 'ok');
+          allErrorDetails.push(...errors.map(e => ({
+            experienceId: expId,
+            status: e.status,
+            message: e.message || 'Bilinmeyen hata',
+            details: e.details || null
+          })));
+        }
       }
     } catch (error) {
       console.error(`❌ ${expId || 'null'} - Expo Push Notification hatası:`, error.message);
