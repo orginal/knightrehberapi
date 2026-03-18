@@ -273,6 +273,15 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   const safeMessage = truncateExpoString(message, 100);
   const safeImageUrl = imageUrl ? truncateExpoString(imageUrl, 100) : null;
 
+  // DB'de token alanı bazen fazla karakter/ek metin içerebiliyor.
+  // Expo sadece ExponentPushToken[...] formatındaki kısmı kabul ediyor.
+  const normalizeExpoToken = (value) => {
+    if (value === undefined || value === null) return null;
+    const str = String(value).trim();
+    const match = str.match(/ExponentPushToken\[[^\]]+\]/);
+    return match ? match[0] : str;
+  };
+
   // Token'ları normalize et: eğer string array ise object array'e çevir
   const tokenObjects = pushTokens.map(t => {
     if (typeof t === 'string') {
@@ -293,7 +302,7 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   };
   const validTokens = tokenObjects
     .map(t => ({
-      token: String(t.token).trim(),
+      token: normalizeExpoToken(t.token),
       experienceId: expIdOrNull(t.experienceId),
       platform: t.platform ? String(t.platform).trim().toLowerCase() : null
     }))
