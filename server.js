@@ -352,12 +352,16 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
   let totalFailed = 0;
   let allErrorDetails = [];
 
+  // Expo Push API'de tek request için mesaj sayısı limiti vardır.
+  // 105 gibi değerlerde başarısız oluyor. Bu yüzden 100'lü parçalara böleceğiz.
+  const MAX_MESSAGES_PER_REQUEST = 100;
+
   // Her experienceId grubu için ayrı request gönder
   for (const [expId, tokens] of Object.entries(tokensByExpId)) {
     try {
       console.log(`📤 ${expId || 'null'} experienceId için ${tokens.length} token'a bildirim gönderiliyor...`);
-      
-      const messages = tokens.map(token => ({
+
+      const buildMessage = (token) => ({
         to: token,
         sound: 'default',
         title: safeTitle,
@@ -365,108 +369,120 @@ async function sendExpoPushNotification(pushTokens, title, message, imageUrl = n
         data: { title: safeTitle, message: safeMessage, ...(safeImageUrl && { imageUrl: safeImageUrl }) },
         priority: 'high',
         badge: 1
-      }));
-
-      const response = await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Accept-Encoding': 'gzip, deflate',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(messages),
       });
-      
-      console.log(`📤 ${expId || 'null'} - Expo Push API response status:`, response.status);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`❌ ${expId || 'null'} - Expo Push API hatası:`, response.status, errorText);
-        totalFailed += tokens.length;
-        allErrorDetails.push({
-          experienceId: expId,
-          status: response.status,
-          message: errorText,
-          tokenCount: tokens.length
+      for (let i = 0; i < tokens.length; i += MAX_MESSAGES_PER_REQUEST) {
+        const chunkTokens = tokens.slice(i, i + MAX_MESSAGES_PER_REQUEST);
+        const chunkMessages = chunkTokens.map(buildMessage);
+
+        console.log(`📤 ${expId || 'null'} - chunk ${i / MAX_MESSAGES_PER_REQUEST + 1}: ${chunkTokens.length} token gönderiliyor...`);
+
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip, deflate',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(chunkMessages),
         });
-        // PUSH_TOO_MANY_EXPERIENCE_IDS: Projelere göre ayrı ayrı gönder - kartkedi + ceylan26 hepsi gitsin
-        if (response.status === 400 && errorText.includes('PUSH_TOO_MANY_EXPERIENCE_IDS')) {
-          try {
-            const errJson = JSON.parse(errorText);
-            const details = errJson?.errors?.[0]?.details;
-            if (details && typeof details === 'object') {
-              totalFailed -= tokens.length;
-              const expoHeaders = {
-                'Accept': 'application/json',
-                'Accept-Encoding': 'gzip, deflate',
-                'Content-Type': 'application/json',
-              };
-              const buildMessage = (token) => ({
-                to: token,
-                sound: 'default',
-                title: title,
-                body: message,
-                data: { title, message, ...(imageUrl && { imageUrl }) },
-                priority: 'high',
-                badge: 1
-              });
-              for (const [project, tokenList] of Object.entries(details)) {
-                if (!Array.isArray(tokenList) || tokenList.length === 0) continue;
-                console.log(`📤 ${project} - ${tokenList.length} token'a ayrı istek gönderiliyor...`);
-                const projectMessages = tokenList.map(buildMessage);
-                const projectResponse = await fetch('https://exp.host/--/api/v2/push/send', {
-                  method: 'POST',
-                  headers: expoHeaders,
-                  body: JSON.stringify(projectMessages),
+
+        console.log(`📤 ${expId || 'null'} - Expo Push API response status:`, response.status);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`❌ ${expId || 'null'} - Expo Push API hatası:`, response.status, errorText);
+          totalFailed += chunkTokens.length;
+          allErrorDetails.push({
+            experienceId: expId,
+            status: response.status,
+            message: errorText,
+            tokenCount: chunkTokens.length
+          });
+
+          // PUSH_TOO_MANY_EXPERIENCE_IDS: Projelere göre ayrı ayrı gönder - kartkedi + ceylan26 hepsi gitsin
+          if (response.status === 400 && errorText.includes('PUSH_TOO_MANY_EXPERIENCE_IDS')) {
+            try {
+              const errJson = JSON.parse(errorText);
+              const details = errJson?.errors?.[0]?.details;
+              if (details && typeof details === 'object') {
+                totalFailed -= chunkTokens.length;
+                const expoHeaders = {
+                  'Accept': 'application/json',
+                  'Accept-Encoding': 'gzip, deflate',
+                  'Content-Type': 'application/json',
+                };
+
+                // Proje bazlı mesaj üretiminde de safeTitle/safeMessage kullan
+                const buildProjectMessage = (token) => ({
+                  to: token,
+                  sound: 'default',
+                  title: safeTitle,
+                  body: safeMessage,
+                  data: { title: safeTitle, message: safeMessage, ...(safeImageUrl && { imageUrl: safeImageUrl }) },
+                  priority: 'high',
+                  badge: 1
                 });
-                if (projectResponse.ok) {
-                  const projectResult = await projectResponse.json();
-                  const okCount = projectResult.data?.filter(r => r.status === 'ok').length || 0;
-                  const failCount = projectResult.data?.filter(r => r.status !== 'ok').length || 0;
-                  totalSuccess += okCount;
-                  totalFailed += failCount;
-                  if (projectResult.data) {
-                    projectResult.data.forEach((item, idx) => {
-                      if (item.status === 'ok') {
-                        console.log(`✅ ${project} - Token ${idx + 1}: OK`);
-                      } else {
-                        console.error(`❌ ${project} - Token ${idx + 1}: ${item.message || item.status}`);
-                      }
-                    });
+
+                for (const [project, tokenList] of Object.entries(details)) {
+                  if (!Array.isArray(tokenList) || tokenList.length === 0) continue;
+                  console.log(`📤 ${project} - ${tokenList.length} token'a ayrı istek gönderiliyor...`);
+                  const projectMessages = tokenList.map(buildProjectMessage);
+                  const projectResponse = await fetch('https://exp.host/--/api/v2/push/send', {
+                    method: 'POST',
+                    headers: expoHeaders,
+                    body: JSON.stringify(projectMessages),
+                  });
+                  if (projectResponse.ok) {
+                    const projectResult = await projectResponse.json();
+                    const okCount = projectResult.data?.filter(r => r.status === 'ok').length || 0;
+                    const failCount = projectResult.data?.filter(r => r.status !== 'ok').length || 0;
+                    totalSuccess += okCount;
+                    totalFailed += failCount;
+                    if (projectResult.data) {
+                      projectResult.data.forEach((item, idx) => {
+                        if (item.status === 'ok') {
+                          console.log(`✅ ${project} - Token ${idx + 1}: OK`);
+                        } else {
+                          console.error(`❌ ${project} - Token ${idx + 1}: ${item.message || item.status}`);
+                        }
+                      });
+                    }
+                    console.log(`✅ ${project}: ${okCount} ulaştı, ${failCount} hata`);
+                  } else {
+                    totalFailed += tokenList.length;
+                    const errBody = await projectResponse.text();
+                    console.error(`❌ ${project} isteği başarısız:`, projectResponse.status, errBody?.substring(0, 200));
                   }
-                  console.log(`✅ ${project}: ${okCount} ulaştı, ${failCount} hata`);
-                } else {
-                  totalFailed += tokenList.length;
-                  const errBody = await projectResponse.text();
-                  console.error(`❌ ${project} isteği başarısız:`, projectResponse.status, errBody?.substring(0, 200));
                 }
               }
+            } catch (parseErr) {
+              console.error('PUSH_TOO_MANY_EXPERIENCE_IDS parse hatası:', parseErr?.message);
             }
-          } catch (parseErr) {
-            console.error('PUSH_TOO_MANY_EXPERIENCE_IDS parse hatası:', parseErr?.message);
           }
+
+          continue;
         }
-        continue;
-      }
 
-      const result = await response.json();
-      
-      // Her bir token için detaylı log
-      if (result.data && Array.isArray(result.data)) {
-        result.data.forEach((item, index) => {
-          if (item.status === 'ok') {
-            console.log(`✅ ${expId || 'null'} - Token ${index + 1}: OK - ${item.id || 'ID yok'}`);
-          } else {
-            console.error(`❌ ${expId || 'null'} - Token ${index + 1}: ${item.status} - ${item.message || 'Bilinmeyen hata'}`);
-          }
-        });
-      }
+        const result = await response.json();
 
-      const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
-      const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
-      
-      totalSuccess += successCount;
-      totalFailed += failedCount;
+        // Her bir token için detaylı log
+        if (result.data && Array.isArray(result.data)) {
+          result.data.forEach((item, index) => {
+            if (item.status === 'ok') {
+              console.log(`✅ ${expId || 'null'} - Token ${index + 1}: OK - ${item.id || 'ID yok'}`);
+            } else {
+              console.error(`❌ ${expId || 'null'} - Token ${index + 1}: ${item.status} - ${item.message || 'Bilinmeyen hata'}`);
+            }
+          });
+        }
+
+        const successCount = result.data?.filter(r => r.status === 'ok').length || 0;
+        const failedCount = result.data?.filter(r => r.status !== 'ok').length || 0;
+
+        totalSuccess += successCount;
+        totalFailed += failedCount;
+      }
 
       // Hata alan token'ları blacklist'e EKLEME - güncel cihazlar engellenmesin, her gönderimde tekrar denenecek
       
